@@ -371,8 +371,8 @@ process_exec (void *f_name) {
 	 *   자식 이미지를 로드해도 process_exit의 종료 메시지에는 원래 프로세스
 	 *   이름이 찍혀야 한다. 이 strlcpy를 살리면 exec-once 같은 테스트에서
 	 *   종료 메시지의 프로세스 이름이 바뀌어 fail. */
-	// strlcpy (thread_current ()->name, argv[0],
-	//          sizeof thread_current ()->name);
+	strlcpy (thread_current ()->name, argv[0],
+	         sizeof thread_current ()->name);
 
 	/* load()에는 프로그램 이름(argv[0])만 넘긴다.
 	 * 나머지 인자는 argument_stack()에서 유저 스택에 직접 쓴다. */

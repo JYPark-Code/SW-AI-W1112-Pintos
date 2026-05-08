@@ -1,0 +1,25 @@
+{
+    "configurations": [
+        {
+            "name": "Pintos",
+            "includePath": [
+                "${workspaceFolder}/pintos/include",
+                "${workspaceFolder}/pintos/include/threads",
+                "${workspaceFolder}/pintos/include/userprog",
+                "${workspaceFolder}/pintos/include/vm",
+                "${workspaceFolder}/pintos/include/filesys",
+                "${workspaceFolder}/pintos/include/lib",
+                "${workspaceFolder}/pintos/include/lib/kernel",
+                "${workspaceFolder}/pintos/include/devices"
+            ],
+            "defines": [
+                "USERPROG",
+                "__x86_64__"
+            ],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c11",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}

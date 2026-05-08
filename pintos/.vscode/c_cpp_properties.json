@@ -1,0 +1,25 @@
+{
+    "configurations": [
+        {
+            "name": "Pintos",
+            "includePath": [
+                "${workspaceFolder}/include",
+                "${workspaceFolder}/include/threads",
+                "${workspaceFolder}/include/userprog",
+                "${workspaceFolder}/include/vm",
+                "${workspaceFolder}/include/filesys",
+                "${workspaceFolder}/include/lib",
+                "${workspaceFolder}/include/lib/kernel",
+                "${workspaceFolder}/include/devices"
+            ],
+            "defines": [
+                "USERPROG",
+                "__x86_64__"
+            ],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c11",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}
