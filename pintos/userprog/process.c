@@ -303,8 +303,8 @@ process_exec (void *f_name) {
 	 * "args-single one"처럼 잘리고, process_exit의 종료 메시지가 깨진다. */
 
 	/* exec() 호출시 원 프로세스 이름이 나오길 기대 현재 child 프로세스로 덮어씌워짐 (주석 이유) */
-	// strlcpy (thread_current ()->name, argv[0],
-	//          sizeof thread_current ()->name);
+	strlcpy (thread_current ()->name, argv[0],
+	         sizeof thread_current ()->name);
 
 	/* load()에는 프로그램 이름(argv[0])만 넘긴다.
 	 * 나머지 인자는 argument_stack()에서 유저 스택에 직접 쓴다. */

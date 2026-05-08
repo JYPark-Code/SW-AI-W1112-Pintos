@@ -20,7 +20,7 @@ struct lock filesys_lock;
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
-static struct lock filesys_lock;
+
 struct fd_entry {
 	int fd;
 	struct file *file;
