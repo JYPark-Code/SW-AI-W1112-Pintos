@@ -15,7 +15,10 @@
 > | §4 | uninit_new 와 함수 포인터 저장 | 실행을 page fault 시점으로 미루는 이유 |
 > | §5 | hash_entry 매크로의 동작 원리 | container_of 패턴, offsetof 역산 |
 > | §6 | hash_find 에서 less 를 두 번 쓰는 이유 | 동등성을 "둘 다 작지 않다" 로 표현 |
-> | §7 | 다음에 할 일 | spt_find_page → fault handler → claim 까지 |
+> | §7 | `spt_insert_page` 와 hash_insert 시맨틱 | 중복 키 invariant |
+> | §8 | `spt_find_page` — 임시 객체로 키 표현하기 | §6.2 패턴의 실제 적용 |
+> | §9 | 핵심 개념 정리 (내 언어로) | 한 줄 요약 모음 |
+> | §10 | 다음에 할 일 | fault handler → claim → swap |
 
 ---
 
@@ -342,7 +345,101 @@ spt_insert_page (struct supplemental_page_table *spt UNUSED,
 
 ---
 
-## 8. 핵심 개념 정리 (내 언어로)
+## 8. `spt_find_page` — 임시 객체로 키 표현하기
+
+커밋 [`1ff5a78`](../../../commit/1ff5a78) — *feat(vm): spt_find_page 해시
+탐색 구현*. §6.2 에서 예고했던 **"임시 `struct page` 를 스택에 만들어
+키 표현으로 쓰는"** 패턴을 실제 코드로 구현한 날이다.
+
+### 8.1 구현 코드
+
+```c
+/* Find VA from spt and return page. On error, return NULL. */
+struct page *
+spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
+    struct page *page = NULL;
+    struct page temp;
+    temp.va = pg_round_down(va);
+
+    struct hash_elem *e = hash_find(&spt->pages, &temp.spt_elem);
+    if (e == NULL)
+        return NULL;
+
+    page = hash_entry(e, struct page, spt_elem);
+    return page;
+}
+```
+
+### 8.2 세 줄 안에 오늘까지 배운 트릭이 다 들어간다
+
+| 줄 | 트릭 | 어디서 정리했나 |
+|---|---|---|
+| `temp.va = pg_round_down(va)` | 페이지 경계로 키 정규화 | 페이지 단위 등록 규약 |
+| `hash_find(..., &temp.spt_elem)` | "키만 채운 임시 객체" 패턴 | §6.2 |
+| `hash_entry(e, struct page, spt_elem)` | 멤버 주소 → 컨테이너 역산 | §5 container_of |
+
+### 8.3 `pg_round_down` — 왜 필요한가
+
+SPT 에 등록될 때 키는 **페이지 시작 주소**(`0x5000`, `0x6000`, ...)다.
+그런데 fault 주소나 호출자가 건넨 va 는 페이지 안쪽 임의 위치일 수 있다.
+
+```
+요청 va:   0x5048
+   │
+   ▼ pg_round_down  (하위 12비트 mask)
+   │
+SPT 키:    0x5000   ← hash_find 가 찾을 수 있는 값
+```
+
+이 한 줄이 없으면 정확히 페이지 시작 주소로 접근할 때만 매치되고, 그
+외의 모든 fault 가 미스 처리된다. **페이지 단위 자료구조의 공통 정규화
+단계**다.
+
+### 8.4 왜 임시 `struct page` 인가 — §6.2 의 정확한 적용
+
+`hash_find` 는 `hash_elem*` 만 받는다. 그런데 호출 시점에 우리가 가진 건
+va 하나뿐. 그래서:
+
+> "키만 채운 가짜 page" 를 스택에 잠깐 만들고, 그 안의 `spt_elem` 주소를
+> `hash_find` 에 넘긴다. 비교는 `page_less` 가 `va` 만 보기 때문에 가짜
+> elem 이라도 문제없다.
+
+§6.2 에서 그림으로 그렸던 *"포인터 주소는 다르지만 va 는 같다 → less
+두 번이 동등 처리"* 가 바로 이 줄에서 동작한다. 임시 객체는 함수가 리턴
+하면 스택과 함께 사라지므로 `malloc` / `free` 가 필요 없다.
+
+### 8.5 `hash_entry` 로 진짜 page 로 복원 — 비대칭 흐름
+
+```
+            ┌────────── 입력 ──────────┐
+            │  스택의 가짜 page         │
+            │    └─ spt_elem (key only)│
+            └──────────────┬───────────┘
+                           │ hash_find
+                           ▼
+            ┌────────── 매치 ──────────┐
+            │  SPT 안 진짜 hash_elem   │
+            └──────────────┬───────────┘
+                           │ hash_entry (= -offsetof)
+                           ▼
+                  진짜 struct page *
+```
+
+**들어갈 때는 임시 객체, 나올 때는 진짜 객체.** 이 비대칭이 이 함수의
+묘미다. 같은 `hash_elem*` 타입이지만 전자는 스택에 잠시 살았다 사라지고,
+후자는 SPT 가 들고 있는 영구 객체다.
+
+### 8.6 NULL 처리 — fault handler 가 의존할 시맨틱
+
+`hash_find` 가 `NULL` 을 돌려주면 그대로 `NULL` 을 반환한다. 이게 단순해
+보이지만 의미가 크다. 다음 단계인 `vm_try_handle_fault` 는 이 NULL 을
+보고 **"SPT 에도 없는 진짜 잘못된 접근"** 이라고 판단해 프로세스를 죽이게
+된다. 즉 `spt_find_page` 의 반환값은 *"이건 lazy load 케이스인가, 진짜
+seg fault 인가"* 를 가르는 첫 분기점이다.
+
+---
+
+## 9. 핵심 개념 정리 (내 언어로)
 
 - **Lazy Loading**: 처음엔 종이에 "여기 페이지 있을 예정" 이라고만 적어둔다.
   실제로 누가 찾아오면 그제서야 진짜로 가져온다. Page fault 는 종업원을
@@ -364,25 +461,28 @@ spt_insert_page (struct supplemental_page_table *spt UNUSED,
 
 ---
 
-## 9. 다음에 할 일
+## 10. 다음에 할 일
+
+`spt_find_page` 까지는 끝났다. 이제 page fault 를 **받아서** "lazy load 인가
+seg fault 인가" 를 판단하고, 진짜로 frame 을 잡아 매핑하는 단계로 간다.
 
 | 함수 | 해야 할 일 | 의존 |
 |---|---|---|
-| `spt_find_page` | `hash_find` 로 va 매칭 page 검색 | 임시 `struct page` 에 va 만 세팅 → spt_elem 으로 find → hash_entry 로 복원 |
-| `vm_try_handle_fault` | fault 주소 → SPT 조회 → `vm_do_claim_page` 호출 | 유효성 검증 (스택 확장 / read-only write 등) 분기 필요 |
+| `vm_try_handle_fault` | fault 주소 → `spt_find_page` 조회 → `vm_do_claim_page` 호출 | 스택 확장 / read-only write / kernel 영역 접근 등 분기 필요 |
 | `vm_do_claim_page` | frame 할당 → pml4 매핑 → `swap_in` 호출로 진짜 데이터 채움 | `vm_get_frame`, `pml4_set_page` |
 | `swap_in / swap_out` | anon/file 별로 시작. swap disk 는 나중 단계 | `anon_initializer` 가 채워줄 ops 와 연결 |
 
 흐름을 한 줄로 그리면:
 
 ```
-fault → vm_try_handle_fault → spt_find_page → vm_do_claim_page
-                                                    │
-                                                    ├─ vm_get_frame
-                                                    ├─ pml4_set_page
-                                                    └─ swap_in (= uninit_initialize → page_initializer → init)
+fault → vm_try_handle_fault → spt_find_page ✓ → vm_do_claim_page
+                                                       │
+                                                       ├─ vm_get_frame
+                                                       ├─ pml4_set_page
+                                                       └─ swap_in (= uninit_initialize → page_initializer → init)
 ```
 
-오늘 만든 `vm_alloc_page_with_initializer` 가 저장해둔 함수 포인터들이
-**바로 그 마지막 줄에서 처음 실행된다.** 등록과 실행 사이의 시간차 ——
-그게 이 프로젝트의 정신이다.
+`vm_alloc_page_with_initializer` 가 저장해둔 함수 포인터들이 **바로 그
+마지막 줄에서 처음 실행된다.** 오늘 만든 `spt_find_page` 는 이 흐름의
+**첫 분기 — "SPT 에 있는가?"** 를 답하는 함수다. 있으면 lazy load 의 길로,
+없으면 프로세스 종료의 길로 — 이 분기가 다음 작업의 출발점이다.
