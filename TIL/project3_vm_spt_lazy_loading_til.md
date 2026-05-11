@@ -13,7 +13,7 @@
 > | §2 | Lazy Loading 의 설계 의도 | "page fault 는 버그가 아니라 약속이다" |
 > | §3 | SPT vs pml4 | 두 테이블이 답하는 질문이 다르다 |
 > | §4 | uninit_new 와 함수 포인터 저장 | 실행을 page fault 시점으로 미루는 이유 |
-> | §5 | hash_entry 매크로의 동작 원리 | container_of 패턴, offsetof 역산 |
+> | §5 | hash_entry 매크로의 동작 원리 | container_of 패턴, offsetof 역산, Project 1 condvar 와의 구조적 동일성 |
 > | §6 | hash_find 에서 less 를 두 번 쓰는 이유 | 동등성을 "둘 다 작지 않다" 로 표현 |
 > | §7 | `spt_insert_page` 와 hash_insert 시맨틱 | 중복 키 invariant |
 > | §8 | `spt_find_page` — 임시 객체로 키 표현하기 | §6.2 패턴의 실제 적용 |
@@ -228,6 +228,83 @@ page_less(const struct hash_elem *a, const struct hash_elem *b,
 
 해시테이블은 `hash_elem*` 만 보지만, 내가 비교하고 싶은 건 `page->va` 다.
 `hash_entry` 가 그 다리를 놓아준다.
+
+### 5.4 Project 1 condvar 와의 구조적 동일성 — 같은 패턴, 다른 옷
+
+오늘 `spt_find_page` 를 짜다가 갑자기 깨달았다. 이 구조, **Project 1 의
+condition variable 에서 이미 본 것**이다. 두 프로젝트가 데이터 구조는 다른데
+*뼈대* 는 정확히 똑같다.
+
+#### 두 구조의 모양
+
+```
+condvar  (Project 1)
+└─ waiters (struct list)
+       └─ list_elem (← list 가 들고 있는 노드)
+              ▲
+              └─ semaphore_elem  안에 박혀 있음
+                     └─ struct semaphore
+
+SPT  (Project 3)
+└─ pages (struct hash)
+       └─ hash_elem (← hash 가 들고 있는 노드)
+              ▲
+              └─ struct page  안에 박혀 있음
+                     └─ void *va
+```
+
+컨테이너(list / hash)는 자기가 들고 있는 게 **그냥 elem 노드일 뿐**이라고
+믿고 살아간다. 사용자 데이터(`semaphore_elem`, `page`)는 그 노드 주위에
+"감싸여" 있고, 필요할 때 역산해서 꺼낸다.
+
+#### 코드도 평행하다
+
+| | Project 1 | Project 3 |
+|---|---|---|
+| 컨테이너 타입 | `struct list` | `struct hash` |
+| 박힌 노드 | `struct list_elem elem` | `struct hash_elem spt_elem` |
+| 역산 매크로 | `list_entry(e, T, MEMBER)` | `hash_entry(e, T, MEMBER)` |
+| 실사용 | `sema = list_entry(e, struct semaphore_elem, elem);` | `page = hash_entry(e, struct page, spt_elem);` |
+| 키 비교 기준 | `sema_priority(a) < sema_priority(b)` | `pa->va < pb->va` |
+
+두 매크로의 본체도 똑같다 — **elem 주소에서 `offsetof` 만큼 빼서 바깥
+구조체 시작 주소를 얻는다.**
+
+```c
+#define list_entry(LIST_ELEM, STRUCT, MEMBER) \
+    ((STRUCT *) ((uint8_t *) &(LIST_ELEM)->next \
+        - offsetof(STRUCT, MEMBER.next)))
+
+#define hash_entry(HASH_ELEM, STRUCT, MEMBER) \
+    ((STRUCT *) ((uint8_t *) &(HASH_ELEM)->list_elem \
+        - offsetof(STRUCT, MEMBER.list_elem)))
+```
+
+#### 핵심 원리 (둘 다 공통)
+
+```
+바깥 구조체 시작 주소  =  elem 주소  -  offsetof(컨테이너_타입, 멤버)
+```
+
+이중 포인터 역참조도, 별도의 back-pointer 도 아니다. **컴파일 타임 상수인
+`offsetof` 로 산술 연산만 하면** 바깥 구조체로 돌아간다. 이게 가능한 이유:
+struct 의 메모리 레이아웃은 컴파일 타임에 확정되니까.
+
+#### 왜 이게 중요한가
+
+- Pintos 의 list / hash / (그리고 향후 frame table, mmap list 까지) **모든
+  컨테이너가 동일한 트릭**으로 작동한다. 한 번 익히면 끝.
+- `struct page` 가 *list 에 들어가야 할 수도, hash 에 들어가야 할 수도*
+  있는데, 각각의 elem 멤버를 따로 박아두면 **같은 객체가 여러 컨테이너에
+  동시에 소속될 수 있다.** (실제로 `struct thread` 가 `elem`, `allelem`
+  두 개의 `list_elem` 을 갖는 게 같은 이유)
+- "어떤 구조체에든 박혀 들어가는 노드" 라는 발상이 **C 에서 제네릭을
+  흉내내는 표준 방식**이다. C++ 의 템플릿, Rust 의 trait 가 컴파일러
+  지원으로 하는 일을, C 는 매크로 + offsetof 로 한다.
+
+> **메타 교훈**: 새 프로젝트로 넘어왔다고 새 패턴이 나오는 게 아니다.
+> 같은 패턴이 다른 옷을 입고 다시 등장한다. Project 1 에서 본 것을 다시
+> 알아보는 능력이 Project 3 의 진짜 가속 요인이었다.
 
 ---
 
