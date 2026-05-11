@@ -4,6 +4,19 @@
 #include "vm/vm.h"
 #include "vm/inspect.h"
 
+// va를 해시값으로 변환
+static uint64_t page_hash(const struct hash_elem *e, void *aux UNUSED){
+	struct page *p = hash_entry(e, struct page, spt_elem);
+    return hash_bytes(&p->va, sizeof(p->va));
+}
+// va 기준으로 크기 비교
+static bool page_less(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED){
+	struct page *pa = hash_entry(a, struct page, spt_elem);
+    struct page *pb = hash_entry(b, struct page, spt_elem);
+    return pa->va < pb->va;
+}
+
+
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
 void
@@ -47,16 +60,42 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 	ASSERT (VM_TYPE(type) != VM_UNINIT)
 
 	struct supplemental_page_table *spt = &thread_current ()->spt;
+	struct page *page = (struct page *)malloc(sizeof(struct page));
 
 	/* Check wheter the upage is already occupied or not. */
 	if (spt_find_page (spt, upage) == NULL) {
 		/* TODO: Create the page, fetch the initialier according to the VM type,
 		 * TODO: and then create "uninit" page struct by calling uninit_new. You
 		 * TODO: should modify the field after calling the uninit_new. */
+		
+		if (page == NULL){
+			goto err;
+		}
 
+		bool (*page_initializer)(struct page *, enum vm_type, void *); /* 함수 포인터 선언 */
+		switch (VM_TYPE(type))
+		{
+		case VM_ANON:
+			page_initializer = anon_initializer;
+			break;
+
+		case VM_FILE:
+			page_initializer = file_backed_initializer;
+			break;
+		
+		default:
+			break;
+		}
+		
+		uninit_new(page, upage, init, type, aux, page_initializer);
 		/* TODO: Insert the page into the spt. */
+		if (!spt_insert_page(spt, page))
+    		goto err;
+		return true;
+		
 	}
 err:
+	free(page);
 	return false;
 }
 
@@ -75,7 +114,9 @@ spt_insert_page (struct supplemental_page_table *spt UNUSED,
 		struct page *page UNUSED) {
 	int succ = false;
 	/* TODO: Fill this function. */
-
+	if (hash_insert(&spt->pages, &page->spt_elem) == NULL){
+		succ = true;
+	}
 	return succ;
 }
 
@@ -174,6 +215,7 @@ vm_do_claim_page (struct page *page) {
 /* Initialize new supplemental page table */
 void
 supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
+	hash_init(&spt->pages, page_hash, page_less, NULL);
 }
 
 /* Copy supplemental page table from src to dst */
