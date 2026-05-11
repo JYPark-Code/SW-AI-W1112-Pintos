@@ -104,6 +104,14 @@ struct page *
 spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
 	struct page *page = NULL;
 	/* TODO: Fill this function. */
+	struct page temp;
+	temp.va = pg_round_down(va);
+
+	struct hash_elem *e = hash_find(&spt->pages, &temp.spt_elem);
+	if (e == NULL)
+		return NULL;
+
+	page = hash_entry(e, struct page, spt_elem);
 
 	return page;
 }
