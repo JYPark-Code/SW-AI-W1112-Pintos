@@ -243,17 +243,73 @@ typedef bool hash_less_func (const struct hash_elem *a,
 `a < b` 만 알려주는 함수다. 그런데 `hash_find` 는 "같은 키를 찾고 싶다."
 어떻게?
 
-```
-a == b  ⟺  !(a < b) && !(b < a)
+### 6.1 `hash_find` 내부 동작
+
+```c
+/* hash_find 가 버킷을 훑으면서 매번 하는 비교 */
+if (!h->less(hi, e, h->aux) && !h->less(e, hi, h->aux))
+    return hi;
 ```
 
-**둘 다 작지 않으면 둘은 같다.** 그래서 `hash_find` 는 내부적으로 `less` 를
-두 번 호출해서 동등성을 만들어낸다.
+이게 전부다. **less 를 두 번 호출해서 동등성을 합성한다.**
+
+### 6.2 왜 `==` 를 못 쓰는가
+
+이 질문이 처음엔 안 와닿았다. 어차피 같은 키면 `hash_elem*` 도 같지 않나?
+→ **틀렸다.** `==` 는 **포인터 주소 비교**이고, 탐색할 때 내가 만든 임시
+`hash_elem` 의 주소와 SPT 안에 이미 들어있는 실제 `hash_elem` 의 주소는
+서로 다르다.
+
+`spt_find_page` 의 전형적인 구현 패턴을 떠올려보면 분명해진다.
+
+```c
+struct page *
+spt_find_page (struct supplemental_page_table *spt, void *va) {
+    struct page key;          /* ← 스택에 잠깐 만든 임시 page */
+    key.va = pg_round_down(va);
+    struct hash_elem *e = hash_find(&spt->pages, &key.spt_elem);
+    return e ? hash_entry(e, struct page, spt_elem) : NULL;
+}
+```
+
+여기서 `&key.spt_elem` 은 **스택 위의 주소**다. 진짜 page 의 `spt_elem` 은
+**힙 어딘가의 주소**다. 둘은 같은 va 를 표현하지만 주소 자체는 절대 같지
+않다.
+
+### 6.3 구체 예시 — 주소는 다른데 키는 같은 상황
+
+```
+실제 page  (힙, 주소 0xAAAA1000)
+  ├─ va       = 0x5000
+  └─ spt_elem (주소 0xAAAA1010)   ← 해시 버킷이 들고 있는 elem
+
+임시 page  (스택, 주소 0xBBBB2000)
+  ├─ va       = 0x5000            ← 같은 키
+  └─ spt_elem (주소 0xBBBB2010)   ← hash_find 에 넘긴 elem
+
+==  비교:  0xAAAA1010 != 0xBBBB2010   → 못 찾음 ✗
+
+less 두 번:
+  !(0x5000 < 0x5000)  →  true
+  !(0x5000 < 0x5000)  →  true
+  ───────────────────────────────
+  true && true        →  찾았다 ✓
+```
+
+`less` 를 두 번 쓰면 **포인터 주소가 달라도 `va` 값으로 동등 판단** 이
+된다. 이게 핵심이다.
+
+### 6.4 일반 원리
+
+```
+!(a < b) && !(b < a)   ⟹   a == b   (사용자가 정의한 키 의미상)
+```
 
 이 트릭의 장점은 사용자가 `less` 하나만 정의하면 정렬, 동등성, 정렬된
 삽입까지 다 처리 가능하다는 것. C++ STL 의 `std::set` 도 같은 규약(strict
-weak ordering)을 쓴다. Pintos 가 굳이 이상한 짓을 한 게 아니라 **표준적인
-컨벤션** 이었다.
+weak ordering)을 쓰고, Java 의 `Comparator` 도 결국 같은 역할이다. C 처럼
+**제네릭이 없는 언어에서 해시/트리 컨테이너를 구현하는 관용적 패턴**이다.
+Pintos 가 굳이 이상한 짓을 한 게 아니다.
 
 > 다만 부작용: 한 번의 lookup 에 `less` 호출이 두 번 → 비교 비용이
 > 비싼 타입이면 약간 손해. 우리 경우는 `void*` 두 개 비교라 무시 가능.
