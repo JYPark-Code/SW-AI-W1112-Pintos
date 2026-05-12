@@ -64,6 +64,43 @@ pintos/include/threads/thread.h   ← thread->running_file 필드
 pintos/threads/thread.c           ← running_file = NULL 초기화
 ```
 
+### 1.3 세 커밋의 흐름 도식
+
+```mermaid
+flowchart TD
+    PF([Page Fault])
+
+    subgraph C1["6dd3e01 · claim"]
+        D[vm_do_claim_page]
+        F[vm_get_frame]
+    end
+
+    subgraph C2["3318876 · fault"]
+        H[vm_try_handle_fault]
+        G[vm_stack_growth]
+    end
+
+    subgraph C3["5d60719 · lazy"]
+        A[anon_initializer]
+        L[lazy_load_segment]
+        R[running_file]
+    end
+
+    PF --> H
+    H -->|hit| D
+    H -->|stack| G
+    G -.재진입.-> PF
+    D --> F
+    D --> A
+    A --> L
+    L -.file.-> R
+```
+
+- **C1** 매핑 베이스, **C2** fault 분류기, **C3** lazy 실체 + 버그 수정.
+- `G → PF` 점선은 *재진입*: vm_stack_growth 는 alloc 만, 다음 fault 에서
+  claim.
+- setup_stack(C3) 은 프로세스 시작 시 한 번 eager 로 claim — 위 경로와 분리.
+
 ---
 
 ## 2. 흐름 전체 그림
