@@ -88,6 +88,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		}
 		
 		uninit_new(page, upage, init, type, aux, page_initializer);
+		page->writable = writable;
 		/* TODO: Insert the page into the spt. */
 		if (!spt_insert_page(spt, page))
     		goto err;
@@ -159,8 +160,14 @@ vm_evict_frame (void) {
  * space.*/
 static struct frame *
 vm_get_frame (void) {
-	struct frame *frame = NULL;
+	struct frame *frame = malloc(sizeof(struct frame));
 	/* TODO: Fill this function. */
+	frame->kva = palloc_get_page(PAL_USER);
+	
+	if (frame->kva == NULL)
+    	PANIC("todo: swap out");
+
+	frame->page = NULL;
 
 	ASSERT (frame != NULL);
 	ASSERT (frame->page == NULL);
@@ -202,6 +209,13 @@ bool
 vm_claim_page (void *va UNUSED) {
 	struct page *page = NULL;
 	/* TODO: Fill this function */
+	struct supplemental_page_table *spt = &thread_current ()->spt;
+
+	page = spt_find_page(spt, va);
+
+	if (page == NULL){
+		return false;
+	}
 
 	return vm_do_claim_page (page);
 }
@@ -216,7 +230,9 @@ vm_do_claim_page (struct page *page) {
 	page->frame = frame;
 
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
-
+	if(!pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable)){
+		return false;
+	}
 	return swap_in (page, frame->kva);
 }
 

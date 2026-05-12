@@ -45,9 +45,10 @@ struct page {
 	const struct page_operations *operations;
 	void *va;              /* Address in terms of user space */
 	struct frame *frame;   /* Back reference for frame */
-	struct hash_elem spt_elem;  /* SPT 해시테이블 */
 
 	/* Your implementation */
+	bool writable; /* 읽기 가능? */
+	struct hash_elem spt_elem;  /* SPT 해시테이블 */
 
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
@@ -55,6 +56,7 @@ struct page {
 		struct uninit_page uninit;
 		struct anon_page anon;
 		struct file_page file;
+		
 #ifdef EFILESYS
 		struct page_cache page_cache;
 #endif
