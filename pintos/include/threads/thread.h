@@ -119,6 +119,7 @@ struct thread {
 	struct semaphore exit_sema;         /* 자식이 부모의 회수 대기: 부모가 up */
 	struct semaphore fork_sema;         /* fork를 위한 세마포어 */
 	bool fork_success;                  /* 자식의 상태, thread_create()는 성공했는데 메모리 복사에서 실패여부 */
+	struct file *running_file;          
 
 #endif
 #ifdef VM

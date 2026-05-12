@@ -485,6 +485,7 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->parent = NULL;
 	t->fd_next = 2;  /* 0=stdin, 1=stdout 예약 */
 	t->fork_success = false;
+	t->running_file = NULL;
 
 #endif
 	t->magic = THREAD_MAGIC;

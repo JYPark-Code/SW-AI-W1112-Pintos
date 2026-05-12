@@ -3,6 +3,8 @@
 #include "threads/malloc.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
+#include "threads/vaddr.h"
+#include "threads/mmu.h"
 
 // va를 해시값으로 변환
 static uint64_t page_hash(const struct hash_elem *e, void *aux UNUSED){
@@ -202,15 +204,25 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 	3. page 없으면 → 스택 확장 가능한지 판단
 	4. page 있으면 → vm_do_claim_page()
 	*/
-	void *rsp = f->rsp;
-
-	if (addr == NULL || is_kernel_addr(addr)) {
+	
+	
+	// 1. 유효하지 않은 주소 체크
+	if (addr == NULL || is_kernel_vaddr(addr)) {
 		return false;
 	}
+
+	// 2. protection fault는 처리 안 함 (읽기전용 페이지에 쓰기)
+    if (!not_present)
+        return false;
+
+	// 3. rsp 타입 맞추기
+	void *rsp = (void *)f->rsp;
 	
+	// 4. SPT에서 page 찾기
 	page = spt_find_page(spt, addr);
 
-	if(page == NULL && addr >= rsp - 8){
+	// 5. page 없으면 스택 확장 가능한지 판단
+	if(page == NULL && addr >= (void *)((uintptr_t)rsp - 8)){
 		vm_stack_growth(addr);
 		return true;
 	}

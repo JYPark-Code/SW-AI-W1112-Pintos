@@ -30,6 +30,14 @@ static void __do_fork (void *);
 
 #define ARGV_MAX 64     /* 인자 개수 상한 (args-many 테스트 기준 22개로 충분) */
 
+/* lazy_load_segment에 전달할 파일 정보 */
+struct lazy_load_aux {
+    struct file *file;
+    off_t offset;
+    size_t read_bytes;
+    size_t zero_bytes;
+};
+
 /* __do_fork()로 부모 정보를 전달하기 위한 묶음 구조체.
  * thread_create()의 aux는 void* 한 개만 받을 수 있는데,
  * fork에서는 (1) 부모 스레드 포인터(children 리스트 등록용)와
@@ -519,6 +527,10 @@ process_cleanup (void) {
 #ifdef VM
 	supplemental_page_table_kill (&curr->spt);
 #endif
+	 if (curr->running_file != NULL) {
+        file_close(curr->running_file);
+        curr->running_file = NULL;
+    }
 
 	uint64_t *pml4;
 	/* Destroy the current process's page directory and switch back
@@ -730,15 +742,18 @@ done:
 	/* 성공/실패 어느 경우든 도달.
 	 * 실패 분기: new_pml4를 파괴하고 old_pml4를 복원해야 SYS_EXEC가 -1을
 	 * 받고 원래 프로세스에서 계속 실행할 수 있다. */
-	file_close(file);
+
     if (!success) {
+		file_close(file);
         if (t->pml4 != old_pml4) {
             /* 새로 만들었던 페이지 테이블이 활성화돼 있으면 파괴 */
             pml4_destroy(t->pml4);
         }
         t->pml4 = old_pml4;       /* 원래 pml4로 복원 */
         pml4_activate(old_pml4);  /* 원래 pml4 재활성화 */
-    }
+    } else {
+		t-> running_file = file;
+	}
     return success;
 }
 
@@ -893,9 +908,29 @@ install_page (void *upage, void *kpage, bool writable) {
 
 static bool
 lazy_load_segment (struct page *page, void *aux) {
+	/*
+		1. aux에서 파일 정보 꺼내기 
+		2. 파일에서 실제로 읽기
+		3. 나머지 zero_bytes 0으로 채우기
+	*/
 	/* TODO: Load the segment from the file */
+	struct lazy_load_aux *info = (struct lazy_load_aux *) aux;
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
+	/*
+		1. file_seek으로 offset 위치로 이동
+		2. file_read로 page->frame->kva에 읽기
+		3. 나머지 zero_bytes 0으로 채우기
+		4. aux free
+	*/
+	file_seek(info->file, info->offset);
+	off_t target = file_read(info->file, page->frame->kva, info->read_bytes);
+	if (target != info->read_bytes){
+		return false;
+	}
+	memset((uint8_t *)page->frame->kva + info->read_bytes, 0, info->zero_bytes);
+	free(info);
+	return true;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -927,7 +962,16 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
+		struct lazy_load_aux *info = malloc(sizeof(struct lazy_load_aux));
+
+		/* info 구조체에 정보 연결이 필요 */
+		info->file = file;
+		info->offset = ofs;
+		info->read_bytes = page_read_bytes;
+		info->zero_bytes = page_zero_bytes;
+
+		void *aux = info;
+
 		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
 					writable, lazy_load_segment, aux))
 			return false;
@@ -936,6 +980,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
+		ofs += page_read_bytes;
 	}
 	return true;
 }
@@ -950,6 +995,13 @@ setup_stack (struct intr_frame *if_) {
 	 * TODO: If success, set the rsp accordingly.
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
+
+	vm_alloc_page(VM_ANON | VM_MARKER_0 , stack_bottom, true);
+
+	if(vm_claim_page(stack_bottom)){
+		success = true;
+		if_ -> rsp = (uint8_t *) USER_STACK;
+	}
 
 	return success;
 }

@@ -422,5 +422,82 @@
       "last_used": 1778244133.572,
       "last_action": "run"
     }
+  },
+  "vm": {
+    "tests/vm/pt-grow-stack": {
+      "count": 8,
+      "last_used": 1778585129.362,
+      "last_action": "run"
+    },
+    "tests/vm/pt-grow-bad": {
+      "count": 8,
+      "last_used": 1778585129.362,
+      "last_action": "run"
+    },
+    "tests/vm/pt-big-stk-obj": {
+      "count": 8,
+      "last_used": 1778585129.362,
+      "last_action": "run"
+    },
+    "tests/vm/pt-bad-addr": {
+      "count": 8,
+      "last_used": 1778585129.362,
+      "last_action": "run"
+    },
+    "tests/vm/pt-bad-read": {
+      "count": 8,
+      "last_used": 1778585129.362,
+      "last_action": "run"
+    },
+    "tests/vm/pt-write-code": {
+      "count": 8,
+      "last_used": 1778585129.362,
+      "last_action": "run"
+    },
+    "tests/vm/pt-write-code2": {
+      "count": 8,
+      "last_used": 1778585129.362,
+      "last_action": "run"
+    },
+    "tests/vm/pt-grow-stk-sc": {
+      "count": 8,
+      "last_used": 1778585129.362,
+      "last_action": "run"
+    },
+    "tests/vm/page-linear": {
+      "count": 8,
+      "last_used": 1778585129.362,
+      "last_action": "run"
+    },
+    "tests/vm/page-parallel": {
+      "count": 8,
+      "last_used": 1778585129.362,
+      "last_action": "run"
+    },
+    "tests/vm/page-merge-seq": {
+      "count": 8,
+      "last_used": 1778585129.362,
+      "last_action": "run"
+    },
+    "tests/vm/page-merge-par": {
+      "count": 8,
+      "last_used": 1778585129.362,
+      "last_action": "run"
+    },
+    "tests/vm/page-merge-stk": {
+      "count": 8,
+      "last_used": 1778585129.362,
+      "last_action": "run"
+    },
+    "tests/vm/page-merge-mm": {
+      "count": 8,
+      "last_used": 1778585129.362,
+      "last_action": "run"
+    },
+    "tests/vm/page-shuffle": {
+      "count": 8,
+      "last_used": 1778585129.362,
+      "last_action": "run"
+    }
   }
 }
