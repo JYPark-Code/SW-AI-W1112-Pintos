@@ -174,9 +174,13 @@ vm_get_frame (void) {
 	return frame;
 }
 
-/* Growing the stack. */
+/* Growing the stack.
+* addr을 포함하는 페이지를 새로 할당하여 스택을 확장한다.
+* VM_MARKER_0으로 스택 페이지임을 표시하고,
+* pg_round_down으로 페이지 경계에 맞춰 할당한다. */
 static void
 vm_stack_growth (void *addr UNUSED) {
+	vm_alloc_page(VM_ANON | VM_MARKER_0, pg_round_down(addr), true);
 }
 
 /* Handle the fault on write_protected page */
@@ -192,8 +196,32 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 	struct page *page = NULL;
 	/* TODO: Validate the fault */
 	/* TODO: Your code goes here */
+	/* 
+	1. addr이 유효한 주소인지 확인 (NULL, 커널 주소)
+	2. SPT에서 page 찾기
+	3. page 없으면 → 스택 확장 가능한지 판단
+	4. page 있으면 → vm_do_claim_page()
+	*/
+	void *rsp = f->rsp;
 
+	if (addr == NULL || is_kernel_addr(addr)) {
+		return false;
+	}
+	
+	page = spt_find_page(spt, addr);
+
+	if(page == NULL && addr >= rsp - 8){
+		vm_stack_growth(addr);
+		return true;
+	}
+	
+	if (page == NULL){
+		return false;
+	}
+	
 	return vm_do_claim_page (page);
+
+
 }
 
 /* Free the page.
