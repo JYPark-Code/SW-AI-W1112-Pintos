@@ -527,6 +527,9 @@ process_cleanup (void) {
 #ifdef VM
 	supplemental_page_table_kill (&curr->spt);
 #endif
+	 /* SPT 가 먼저 죽은 뒤 닫는다 — lazy load aux 가 이 file 을 참조하므로
+	  * SPT 파괴 전에 닫으면 destroy 콜백 안에서 UAF. file_close 가
+	  * deny_write 도 풀어 주므로 executable 보호도 여기서 끝난다. */
 	 if (curr->running_file != NULL) {
         file_close(curr->running_file);
         curr->running_file = NULL;
@@ -752,6 +755,9 @@ done:
         t->pml4 = old_pml4;       /* 원래 pml4로 복원 */
         pml4_activate(old_pml4);  /* 원래 pml4 재활성화 */
     } else {
+		/* 성공 분기: lazy load 가 끝날 때까지 file 을 살려둬야 한다.
+		 * 여기서 file_close 를 하면 lazy_load_segment 의 file_seek/read 가
+		 * UAF — 실제로 모든 page-* 테스트가 죽었던 버그가 이 한 줄로 해결. */
 		t-> running_file = file;
 	}
     return success;

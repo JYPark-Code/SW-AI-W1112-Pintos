@@ -18,6 +18,7 @@
 > | §6 | `setup_stack` — 스택만 eager 인 이유 | 첫 push 가 fault 안 나야 한다 |
 > | §6.5 | `page->writable` — 언제 정해지고 어디서 쓰이는가 | 호출자가 한 번 박는 값, 스택은 항상 true |
 > | §7 | 버그 1: `file_close` 타이밍 — **모든 테스트가 실패하던 근본 원인** | lazy 와 자원 수명의 충돌 |
+> | §7.6 | `running_file` 자체 — 네 지점·대안 검토·fork/swap 영향 | 한 필드의 수명 그림 |
 > | §8 | 버그 2: `anon_initializer` 의 누락된 `return true` | `&&` 단락평가가 lazy_load 를 통째로 건너뛴다 |
 > | §9 | `uint8_t *` 캐스팅 한 줄 — 포인터 산술의 형식적 규칙 | `void *` 산술이 왜 금지인가 |
 > | §10 | 핵심 깨달음 정리 | 한 줄 요약 모음 |
@@ -651,6 +652,114 @@ lazy load 가 호출될 수 있는 모든 시점이 지난 후에.
 >
 > 오늘 file 은 (1)을 못 지켰고, 해결은 **프로세스 수명에 묶기** 였다.
 > 다음에 어떤 lazy 함수를 추가할 때마다 이 두 질문을 던지자.
+
+### 7.6 `running_file` 자체에 대한 메모 — 네 지점과 한 줄짜리 수명 그림
+
+§7.3 에서 수정 코드를 다 보였지만, `running_file` 이 어떤 필드이고 왜
+그렇게 살고 죽는지를 한 자리에 모아 둔다. 코드 네 군데에 흩어져 있어 처음
+보면 흐름이 안 잡힌다.
+
+#### 7.6.1 코드 네 지점
+
+| # | 위치 | 하는 일 |
+|---|---|---|
+| ① 선언 | `threads/thread.h:122` | `struct thread` 안에 `struct file *running_file;` |
+| ② 초기화 | `threads/thread.c:488` | `init_thread()` 에서 `NULL` 로 둠 |
+| ③ 박제 | `userprog/process.c:754` | `load()` 성공 시 `t->running_file = file;` |
+| ④ 회수 | `userprog/process.c:530` | `process_cleanup()` 에서 SPT 파괴 *후* `file_close` |
+
+흐름 한 줄:
+
+```
+thread_create → NULL
+            ↓
+   load() 성공 → file 박제 (① 의 슬롯이 채워진다)
+            ↓
+   프로세스 실행 (lazy_load_segment 가 이 file 을 file_read — 수십 번)
+            ↓
+   process_exit → process_cleanup → SPT 먼저 죽이고 → file_close
+```
+
+ELF 가 열려 있는 동안은 lazy load 가 언제 호출돼도 안전. **수명 =
+프로세스 수명**.
+
+#### 7.6.2 왜 `struct thread` 안에 두는가 — 검토한 대안들
+
+처음엔 "전역 변수에 둘까", "SPT 구조체 안에 둘까" 도 고민했었다. 각각이
+왜 안 되는지가 곧 "thread 가 정답" 의 이유.
+
+| 대안 | 왜 안 되나 |
+|---|---|
+| **전역 `static struct file *running;`** | 여러 프로세스가 동시에 실행되면 서로 덮어쓴다. ELF 가 프로세스마다 다르므로 per-process 어딘가에 있어야 한다. |
+| **SPT 안 (`spt->running_file`)** | SPT 의 책임이 아니다 — SPT 는 *페이지 메타* 의 컨테이너. 또 §7.3 의 핵심이 "SPT 파괴 전에 file 이 살아 있어야 한다" 인데, file 을 SPT 안에 두면 그 순서 자체가 불가능. |
+| **`lazy_load_aux` 안에 file 사본** | aux 는 페이지마다 하나씩 만들어지는 1회용. file 객체를 페이지마다 별개로 가지면 cursor 가 동시에 여러 개 — `file_reopen` 으로 사본을 떠도 deny_write 일관성이 흔들림. |
+| **`struct thread`** ✅ | per-process, 수명이 프로세스와 정확히 일치, cleanup 순서를 직접 조절 가능. |
+
+#### 7.6.3 `file_close` 가 SPT 파괴 *뒤* 라는 순서의 의미
+
+`process_cleanup()` (`process.c:524`) 의 순서:
+
+```c
+#ifdef VM
+    supplemental_page_table_kill (&curr->spt);   /* (a) SPT 먼저 */
+#endif
+    if (curr->running_file != NULL) {
+        file_close(curr->running_file);          /* (b) 그 다음 file */
+        curr->running_file = NULL;
+    }
+```
+
+뒤집으면 안 된다.
+
+- (a) 가 먼저: SPT 안의 page 들이 destroy 콜백을 도는데, uninit 페이지의
+  destroy 는 `lazy_load_aux` 의 `free` 만 부르고 file 은 안 만진다.
+  그러나 file-backed 페이지 (다음 단계, mmap) 가 들어오면 destroy 가
+  file 을 만지게 된다. 그 시점에 file 이 살아 있어야 한다.
+- (b) 가 먼저: SPT 안에 매달려 있는 aux 의 `file*` 이 즉시 dangling.
+  이후 SPT 파괴 콜백이 file 을 만지는 순간 UAF.
+
+> **메타 교훈**: "SPT 가 가진 모든 메모리를 파괴" 와 "그 메모리가 가리
+> 키던 자원을 닫기" 의 **순서가 곧 정책** 이다. 일반 규칙: *컨테이너
+> 먼저, 그것이 가리키던 자원 그 다음*.
+
+#### 7.6.4 `deny_write` 가 따라오는 보너스
+
+`load()` 안에서 `file_deny_write(file)` 이 호출돼 있다. 실행 중인 바이너
+리를 누군가 덮어쓰지 못하게 막는 안전장치. file_close 는 내부에서
+`file_allow_write` 를 부르므로, **file 의 수명을 늘리면 deny_write 의
+유효 기간도 자동으로 늘어난다.** §7.4 에서 짧게 언급한 부분.
+
+즉 `running_file` 한 필드가 두 가지를 한꺼번에 해결:
+1. lazy load aux 의 `file*` UAF 방지
+2. 실행 중 ELF 보호 (deny_write) 유지
+
+#### 7.6.5 fork 가 들어오면 — 다음 단계의 숙제
+
+`supplemental_page_table_copy` 를 구현할 때 즉시 부딪힐 질문:
+**자식의 `running_file` 은 누가 채우나?**
+
+선택지가 둘.
+
+| 안 | 동작 | 문제 |
+|---|---|---|
+| 부모 file 공유 | `child->running_file = parent->running_file;` | file 의 내부 cursor 공유 → 부모 lazy load 와 자식 lazy load 가 `file_seek` 끼리 충돌. 또 한 쪽이 먼저 exit 하면 다른 쪽이 UAF. |
+| `file_reopen` | 새 `struct file*` 을 떠서 자식에 보관 | inode 는 같으니 데이터는 같고, cursor 만 분리. deny_write 도 별도로 유지됨. |
+
+거의 확실히 `file_reopen` 이 답. §3.2 에서 봤듯 lazy load 가 매번
+`file_seek` 으로 cursor 를 새로 맞춰주긴 하지만, **공유 cursor 는
+race-prone** 이라 별도 인스턴스가 안전.
+
+#### 7.6.6 swap 이 들어오면
+
+anon 페이지는 swap disk 로 가니 file 과 무관. **file-backed 페이지의
+evict** 가 들어오면 (mmap, Project 3 의 다음 큰 단계) `running_file` 과는
+별개로 **각 mmap file 마다 같은 lifetime 관리** 가 필요해진다. mmap 은
+`do_mmap` 안에서 `file_reopen` 으로 새 인스턴스를 떠서 페이지에 박는
+방식이 정석 — `running_file` 의 패턴이 그쪽에서 그대로 한 번 더 반복.
+
+> **메타 교훈**: `running_file` 은 "프로세스 수명에 file 묶기" 의
+> **첫 번째 인스턴스** 다. fork 의 자식 ELF, mmap 의 백킹 파일 — 같은
+> 패턴이 줄줄이 따라온다. 한 번 이해해 두면 그 자리에서 또 만난다.
 
 ---
 
