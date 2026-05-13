@@ -68,26 +68,37 @@ err:
 
 /* Find VA from spt and return page. On error, return NULL. */
 struct page *
-spt_find_page(struct supplemental_page_table *spt UNUSED, void *va UNUSED)
+spt_find_page(struct supplemental_page_table *spt, void *va)
 {
-	struct page *page = NULL;
+	struct page temp_page;
+	struct page *return_page = NULL;
 	/* TODO: Fill this function. */
-
-	return page;
+	// 가상 주소 정렬
+	temp_page.va = pg_round_down(va);
+	// 해당 주소가 존재하는지를 spt->hash_table에서 탐색
+	struct hash_elem *el = hash_find(&spt->hash_table, &temp_page.hash_elem);
+	if (el != NULL)
+		return_page = hash_entry(el, struct page, hash_elem);
+	return return_page;
 }
 
 /* Insert PAGE into spt with validation. */
-bool spt_insert_page(struct supplemental_page_table *spt UNUSED,
-					 struct page *page UNUSED)
+bool spt_insert_page(struct supplemental_page_table *spt,
+					 struct page *page)
 {
+	struct hash_elem *insert_result;
 	int succ = false;
 	/* TODO: Fill this function. */
-
+	insert_result = hash_insert(&spt->hash_table, &page->hash_elem);
+	if (insert_result == NULL)
+		succ = true;
 	return succ;
 }
 
 void spt_remove_page(struct supplemental_page_table *spt, struct page *page)
 {
+	// 해시 테이블에서 delete
+	hash_delete(&spt->hash_table, &page->hash_elem);
 	vm_dealloc_page(page);
 	return true;
 }
