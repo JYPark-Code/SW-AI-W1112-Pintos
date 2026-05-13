@@ -10,7 +10,7 @@
 >
 > | 섹션 | 주제 | 무게중심 |
 > |---|---|---|
-> | §1 | 작업 요약 (이틀 · 6 커밋) | 두 날짜에 걸친 커밋 흐름 + 통과한 테스트 10개 |
+> | §1 | 작업 요약 (이틀 · 6 커밋) | Project 3 전체 지도 · 두 날짜의 커밋 흐름 · 통과한 테스트 10개 |
 > | §2 | 흐름 전체 그림 | "등록 → fault → 매핑 → 로드" 한 장면 |
 > | §3 | `lazy_load_segment` 구현 | aux 구조체, file_seek/read, zero fill |
 > | §4 | `load_segment` 의 aux 전달 패턴 | 함수 포인터 + 클로저 흉내 |
@@ -31,6 +31,63 @@
 
 이틀에 걸쳐 6개의 코드 커밋이 들어갔다. 첫째 날 C1–C3 가 **정상 lazy 경로**
 를 세우고, 둘째 날 C4–C6 가 **비정상 경로 + syscall 측 검증** 을 마감.
+
+### 한눈에 — Project 3 전체 지도와 현재 위치
+
+§1.3 의 도식이 *어느 커밋이 어디를 채웠나* 를 보여준다면, 이 도식은
+**Project 3 전체 중 우리가 어디까지 왔는가** 를 보여준다. 두 도식은 보는
+각도가 다르다 — 한쪽은 커밋·시간 축, 한쪽은 기능·범위 축.
+
+```mermaid
+flowchart LR
+    classDef done fill:#d4f4dd,stroke:#2d7a3e,color:#1a4a26
+    classDef todo fill:#fff8e1,stroke:#888,stroke-dasharray:5 5,color:#555
+    classDef bonus fill:#f0f0f0,stroke:#bbb,stroke-dasharray:3 3,color:#777
+
+    subgraph S1["1 · 기반"]
+        SPT["✅ SPT 해시테이블"]:::done
+        FT["✅ frame 할당<br/>(vm_get_frame)"]:::done
+    end
+
+    subgraph S2["2 · lazy & fault 분류"]
+        LZ["✅ Anon lazy load"]:::done
+        SU["✅ setup_stack 초기 1p"]:::done
+        SG["✅ stack growth<br/>(8B · 1MB 룰)"]:::done
+        FH["✅ fault 분류<br/>hit / stack / invalid"]:::done
+        KI["✅ kill 경로<br/>(exit_status = -1)"]:::done
+        SV["✅ syscall 사전검증<br/>(writable · 범위 · user_rsp)"]:::done
+    end
+
+    subgraph S3["3 · 프로세스 수명"]
+        CP["☐ SPT copy<br/>(fork)"]:::todo
+        KL["☐ SPT kill<br/>(exit cleanup)"]:::todo
+    end
+
+    subgraph S4["4 · 다음 큰 산"]
+        MM["☐ mmap / munmap"]:::todo
+        SW["☐ swap in/out (anon)"]:::todo
+        FE["☐ file-backed evict"]:::todo
+    end
+
+    subgraph S5["보너스 (선택)"]
+        COW["☐ copy-on-write"]:::bonus
+    end
+
+    S1 --> S2 --> S3 --> S4 --> S5
+```
+
+- **1·2 단계 ✅** 가 이 회고의 범위. 정상 lazy 경로 + 모든 비정상 경로의
+  마감까지 끝.
+- **3 단계 ☐** 가 **바로 다음 작업** — `page-*` (parallel, merge 등)
+  테스트의 입구. `supplemental_page_table_copy` 하나가 가장 묵직하다
+  (자식 SPT 에 uninit / anon / file-backed 페이지를 타입별로 복제).
+- **4 단계 ☐** 가 Project 3 의 가장 큰 산 — 프레임이 부족해질 때
+  교체 정책 + 디스크 I/O. mmap 은 그 작은 워밍업.
+- **5 단계 (보너스)** 는 fork 시 페이지를 공유하다 쓰기 시점에 복제 —
+  Project 3 의 선택 과제로 남겨둘 수 있다.
+
+대략 **9 노드 중 6 완료** — 절반 조금 넘었다. 단, 무게로 따지면 swap 이
+혼자 한 단계분이라 실제 남은 작업량은 더 크다.
 
 | # | 커밋 | 한 일 |
 |---|---|---|
