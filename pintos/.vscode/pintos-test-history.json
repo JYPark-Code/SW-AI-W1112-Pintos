@@ -430,8 +430,8 @@
       "last_action": "run"
     },
     "tests/vm/pt-grow-bad": {
-      "count": 8,
-      "last_used": 1778585129.362,
+      "count": 10,
+      "last_used": 1778635836.509,
       "last_action": "run"
     },
     "tests/vm/pt-big-stk-obj": {
