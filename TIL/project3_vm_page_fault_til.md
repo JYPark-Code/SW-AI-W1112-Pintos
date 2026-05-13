@@ -16,6 +16,7 @@
 > | §4 | `load_segment` 의 aux 전달 패턴 | 함수 포인터 + 클로저 흉내 |
 > | §5 | `vm_try_handle_fault` — 분기 설계 | "lazy load 인가, 스택 확장인가, 진짜 사망인가" |
 > | §6 | `setup_stack` — 스택만 eager 인 이유 | 첫 push 가 fault 안 나야 한다 |
+> | §6.5 | `page->writable` — 언제 정해지고 어디서 쓰이는가 | 호출자가 한 번 박는 값, 스택은 항상 true |
 > | §7 | 버그 1: `file_close` 타이밍 — **모든 테스트가 실패하던 근본 원인** | lazy 와 자원 수명의 충돌 |
 > | §8 | 버그 2: `anon_initializer` 의 누락된 `return true` | `&&` 단락평가가 lazy_load 를 통째로 건너뛴다 |
 > | §9 | `uint8_t *` 캐스팅 한 줄 — 포인터 산술의 형식적 규칙 | `void *` 산술이 왜 금지인가 |
@@ -462,6 +463,81 @@ vm_stack_growth (void *addr) {
 
 > **메타 교훈**: "alloc 만 하면 다음 fault 가 claim 한다" 는 lazy 의
 > 일관성을 유지하는 방식이다. 스택 확장도 lazy 와 같은 길로 흘려보낸다.
+
+---
+
+## 6.5 `page->writable` — 언제 정해지고, 어디서 쓰이는가
+
+`setup_stack` 끝줄의 `vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, true)`
+에서 마지막 인자 `true` 가 바로 `page->writable` 의 초기값이다. 팀 회의에서
+**"스택에 들어가는 페이지는 다 writable 아니냐?"** 라는 질문이 나왔는데,
+코드를 처음부터 끝까지 따라가 보니 정확히 그렇다. 정리해 둔다.
+
+### 6.5.1 초기화 위치는 단 한 곳
+
+`page->writable` 은 `vm/vm.c:93` 한 줄에서만 세팅된다:
+
+```c
+/* vm_alloc_page_with_initializer 안 */
+uninit_new(page, upage, init, type, aux, page_initializer);
+page->writable = writable;     /* ← 여기서 결정 */
+spt_insert_page(spt, page);
+```
+
+즉 **SPT 에 페이지를 등록하는 순간** 호출자가 넘긴 인자가 그대로 박힌다.
+이후로는 (현재 코드 기준) 어디서도 토글되지 않는다. 그래서 "언제 바뀌나"
+가 아니라 "**누가 어떤 값으로 넘기는가**" 만 추적하면 된다.
+
+### 6.5.2 호출 경로별 writable 값
+
+| 호출 경로 | writable | 위치 |
+|---|---|---|
+| ELF 세그먼트 로드 | `(phdr.p_flags & PF_W) != 0` | `process.c:702` |
+| `setup_stack` (초기 스택 1페이지) | **하드코딩 `true`** | `process.c:999` |
+| `vm_stack_growth` (스택 확장) | **하드코딩 `true`** | `vm/vm.c:186` |
+| `do_mmap` | mmap 호출자 인자 그대로 | `vm/file.c:51` |
+
+→ **스택으로 흘러가는 두 경로는 둘 다 리터럴 `true`.** 코드 레벨에서
+"스택 페이지는 다 writable" 이 그대로 성립한다. 의미적으로도 push/pop·
+지역변수 쓰기가 필수라 writable=false 인 스택은 그 자리에서 동작 불능.
+
+`false` 가 흘러들어가는 경우는 사실상 **ELF 의 read-only 세그먼트
+(.text, .rodata)** 뿐이다. `phdr.p_flags & PF_W` 비트가 꺼져 있는 PT_LOAD
+세그먼트가 그것.
+
+### 6.5.3 그 값이 실제로 쓰이는 곳
+
+`vm_do_claim_page` (`vm/vm.c:274`):
+
+```c
+pml4_set_page(thread_current()->pml4,
+              page->va, frame->kva, page->writable);
+```
+
+이 한 줄이 `page->writable` 을 **PTE 의 W 비트** 에 반영한다. 그래서:
+
+- read-only 페이지에 쓰기 시도 → not_present 가 아닌 **write-protection
+  violation** → `vm_try_handle_fault` 의 `if (!not_present) return false;`
+  분기로 떨어져 프로세스 종료. §5.1 의 ②번 분기가 바로 이 케이스를 받는다.
+- writable 페이지는 PTE 의 W 가 1 이라 일반 쓰기가 그냥 통과.
+
+fork 쪽도 같은 정보를 다른 경로로 사용한다. `process.c:216` 의
+`is_writable(pte)` 로 **부모 PTE 의 W 비트** 를 읽어 자식의 `pml4_set_page`
+에 그대로 넘긴다. `page->writable` 필드를 직접 읽지 않고 PTE 에서 다시
+끌어오는 게 흥미로운 선택인데, fork 시점엔 어쨌든 부모 매핑이 PTE 에
+이미 반영돼 있다는 가정에 기댄다.
+
+### 6.5.4 메타 교훈
+
+> `page->writable` 은 **호출자가 한 번 결정해서 끝까지 들고 가는 값**이다.
+> 코드 안에서 토글되지 않으니, 추적해야 할 건 "누가 어떤 값으로 alloc 을
+> 부르나" 뿐이다. ELF 헤더가 절반, "스택은 무조건 true" 가 나머지 절반.
+>
+> 한 발 더 — lazy 도입으로 깨졌던 §7 의 `file_close` 처럼, **alloc 시점에
+> 박힌 값이 한참 뒤 fault 시점에 의미를 가진다.** writable 도 같은 구조.
+> SPT 에 박제된 메타데이터가 fault 처리 흐름에서 어떻게 소비되는지를
+> 머릿속에 한 줄로 이어두면, 다음 단계 (swap, fork SPT 복제) 에서 같은
+> 패턴이 또 보일 것이다.
 
 ---
 
