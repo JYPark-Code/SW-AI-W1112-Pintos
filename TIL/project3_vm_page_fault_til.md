@@ -1313,6 +1313,101 @@ rsp 는 즉시, 페이지는 lazy.
 이 구분이 안 잡히면 "왜 32KB 위치에서 stack 이 자라느냐" 가 영원히
 헷갈린다. 64KB 선언이 곧 64KB *할당* 이 아니라는 게 가장 중요한 부분.
 
+###### (5) 페이지 단위로 보기 — 어디가 이미 매핑됐고, 어디가 비었나
+
+여기서 또 자주 헷갈리는 부분: "매핑은 이미 다 된 거 아닌가?" — 아니다.
+**페이지 단위** 로 잘게 쪼개서 봐야 진실이 보인다.
+
+Pintos 의 페이지 크기는 `PGSIZE = 4096 = 4KB` (1KB 가 아니라 4KB).
+64KB 짜리 `buf2` 는 그래서 **64KB ÷ 4KB = 16 페이지** 분량의 *영역을
+덮을 수 있는 잠재 공간*. 실제 SPT 에 등록된 페이지 수는 read 호출
+직전 시점에 16 장보다 훨씬 적다.
+
+```
+주소 ↑ (높음)                  read 호출 직전 SPT 상태
+────────────────────────────────────────────────────────
+ USER_STACK                     ─┐
+   │ setup_stack 페이지          ✓ 등록 (프로세스 시작 시)
+   │ caller 프레임 영역          ✓ 등록 (main → test_main 진입 push)
+   │                             ─┘
+ buf2 + 65535 (= rsp + 65535) ─┐
+   │ page A   (buf2 상단)        ✗ 비어 있음
+   │ page B                       ✗ 비어 있음
+   │   …                          ✗ 비어 있음
+ buf2 + 32768 (= rsp + 32768) ─┤  ← read 가 만지러 오는 위치
+   │ page MID                     ✗ 비어 있음     ← 곧 등록될 페이지
+   │   …                          ✗ 비어 있음
+   │ page Y                       ✗ 비어 있음
+ buf2  (= rsp_after) ───────────┘
+   │ page Z                       ✓ 등록 (test_main 안 push/CHECK 활동)
+   │
+ (현재 rsp 아래 — 미래 함수 호출용)
+ 주소 ↓ (낮음)
+```
+
+요점:
+- 16 페이지 중 **양 끝 몇 장만** 등록돼 있다. 위쪽은 caller 프레임의
+  활동 잔재, 아래쪽은 `test_main` 안의 push/CHECK 가 만든 fault 들.
+- **가운데가 비어 있다.** 특히 `pg_round_down(buf2 + 32768)` 한 페이지
+  는 *아직 누구도 건드린 적 없다.*
+- read syscall 의 `file_read` 가 그 한가운데 페이지에 첫 write 를 시도
+  하는 순간이 fault 의 출발점.
+
+###### (6) stack-grow 가 *정확히* 어디서, *무엇을* 한 장 등록하나
+
+`vm/vm.c:185` — 한 줄짜리 함수.
+
+```c
+static void
+vm_stack_growth (void *addr UNUSED) {
+    vm_alloc_page(VM_ANON | VM_MARKER_0, pg_round_down(addr), true);
+}
+```
+
+`addr = buf2 + 32768`. `pg_round_down(addr)` 가 그 주소를 포함한 페이지의
+시작 (4KB 경계). 그 페이지 *한 장* 을 SPT 에 등록. **64KB 가 아니라
+정확히 4KB.**
+
+호출 경로 전체:
+
+```
+file_read 가 buf2 + 32768 에 write
+   ↓
+page fault (커널 컨텍스트, user = false)
+   ↓
+vm_try_handle_fault  (vm/vm.c:196)
+   │   ① not_present 확인  → 통과
+   │   ② user 플래그 false → rsp ← thread_current()->user_rsp     (§12.5.6)
+   │   ③ spt_find_page(addr) → NULL                                (가운데 빈 페이지)
+   │   ④ stack_bottom ≤ addr < USER_STACK && addr ≥ rsp − 8 → 통과
+   │       (addr 는 rsp 위쪽 32KB, 한참 위)
+   ↓
+vm_stack_growth(addr)  (vm/vm.c:185)
+   │   vm_alloc_page(VM_ANON | VM_MARKER_0,
+   │                 pg_round_down(addr),     ← buf2 + 32768 의 페이지 경계
+   │                 /*writable=*/true)
+   │
+   │   → SPT 에 1 페이지 새로 등록 (uninit → 곧 anon)
+   ↓
+vm_try_handle_fault 가 return true
+   ↓
+CPU 가 같은 명령(file_read 의 write 시도) 재실행
+   ↓
+이번엔 spt_find_page hit → vm_do_claim_page → frame 잡고 매핑
+   ↓
+file_read write 성공
+```
+
+**한 줄 요약**: read 한 번이 SPT 에 늘리는 페이지 = **딱 한 장 (4KB)**.
+64KB 가 통째로 매핑되는 게 아니라, **fault 가 난 그 한 페이지** 만
+`pg_round_down(addr)` 위치에 등록된다. 다음에 *또 다른* 페이지가 필요
+하면 또 fault → 또 한 장. 이게 우리 lazy 정책의 일관된 동작.
+
+> **메타 교훈**: "매핑됐다" 와 "매핑 안 됐다" 를 **영역 단위가 아닌 페이지
+> 단위로** 본다. 64KB 영역이 "매핑됐다" 는 말은 무의미하고, "그 안의
+> 페이지 N 장이 SPT 에 들어 있다" 가 정확한 표현. lazy 시스템에서는
+> 페이지 단위가 *유일한* 단위.
+
 #### 12.5.2 왜 `f->rsp` 를 못 믿는가 — privilege switch 의 메커니즘
 
 x86-64 에서 유저 → 커널 전환이 일어날 때 CPU 가 하는 일:
