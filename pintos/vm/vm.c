@@ -3,6 +3,7 @@
 #include "threads/malloc.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
+#include "threads/vaddr.h"
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -32,10 +33,40 @@ page_get_type (struct page *page) {
 	}
 }
 
+/* SPT hash table의 key인 page->va로 hash 값을 계산한다. */
+static unsigned
+page_hash (const struct hash_elem *e, void *aux UNUSED)
+{
+	/* hash_elem을 포함하고 있는 struct page를 꺼낸다. */
+	const struct page *p = hash_entry (e, struct page, hash_elem);
+
+	/* page의 시작 가상 주소를 기준으로 hash 값을 만든다. */
+	return hash_bytes (&p->va, sizeof p->va);
+}
+
+/* SPT hash table 안에서 두 page를 가상 주소 기준으로 비교한다. */
+static bool
+page_less (const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED)
+{
+	/* 첫 번째 hash_elem이 들어 있는 struct page를 꺼낸다. */
+	const struct page *pa = hash_entry (a, struct page, hash_elem);
+	/* 두 번째 hash_elem이 들어 있는 struct page를 꺼낸다. */
+	const struct page *pb = hash_entry (b, struct page, hash_elem);
+
+	/* page의 시작 가상 주소가 더 작은 page를 앞에 둔다. */
+	return pa->va < pb->va;
+}
+
 /* Helpers */
 static struct frame *vm_get_victim (void);
 static bool vm_do_claim_page (struct page *page);
 static struct frame *vm_evict_frame (void);
+
+/* SPT hash table에서 page->va를 기준으로 hash 값을 만든다. */
+static unsigned page_hash (const struct hash_elem *e, void *aux);
+
+/* SPT hash table에서 page->va를 기준으로 page들을 비교한다. */
+static bool page_less (const struct hash_elem *a, const struct hash_elem *b, void *aux);
 
 /* Create the pending page object with initializer. If you want to create a
  * page, do not create it directly and make it through this function or
@@ -61,28 +92,46 @@ err:
 }
 
 /* Find VA from spt and return page. On error, return NULL. */
+/*  SPT에서 특정 viruatl address에 해당하는 page를 찾는다. */
 struct page *
-spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
-	struct page *page = NULL;
+spt_find_page (struct supplemental_page_table *spt, void *va) {
+	/* 검색 key로 사용할 임시 page */
+	struct page page;
 	/* TODO: Fill this function. */
+	/* hash_find 결과를 받을 hash_elem */
+	struct hash_elem *e;
 
-	return page;
+	/* 주소를 page 시작 주소로 맞춘다. */
+	page.va = pg_round_down (va);
+
+	/* 같은 va를 가진 page를 찾는다. */
+	e = hash_find (&spt->pages, &page.hash_elem);
+
+	//return page;
+	return e != NULL ? hash_entry (e, struct page, hash_elem) : NULL;
 }
 
 /* Insert PAGE into spt with validation. */
+/* 새 page를 SPT hash table에 등록한다. */
 bool
-spt_insert_page (struct supplemental_page_table *spt UNUSED,
-		struct page *page UNUSED) {
-	int succ = false;
+spt_insert_page (struct supplemental_page_table *spt, struct page *page) {
+	//int succ = false;
 	/* TODO: Fill this function. */
 
-	return succ;
+	//return succ;
+	/* page->hash_elem을 SPT hash table에 넣는다. 중복 va가 없으면 성공한다. */
+	return hash_insert (&spt->pages, &page->hash_elem) == NULL;
 }
 
+/* page를 SPT에서 제거하고 page 자원을 해제한다. */
 void
 spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
+	/* SPT hash table에서 page를 제거한다. */
+	hash_delete (&spt->pages, &page->hash_elem);
+
+	/* page 종류별 자원을 정리하고 struct page 메모리를 해제한다. */
 	vm_dealloc_page (page);
-	return true;
+	//return true;
 }
 
 /* Get the struct frame, that will be evicted. */
@@ -172,8 +221,11 @@ vm_do_claim_page (struct page *page) {
 }
 
 /* Initialize new supplemental page table */
+/* 새 프로세스의 SPT를 빈 hash table로 초기화한다. */
 void
-supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
+supplemental_page_table_init (struct supplemental_page_table *spt) {
+	/* page->va 기준 hash/비교 함수를 사용해 SPT hash table을 초기화한다. */
+	hash_init (&spt->pages, page_hash, page_less, NULL);
 }
 
 /* Copy supplemental page table from src to dst */
