@@ -13,6 +13,7 @@
 #include "filesys/file.h"
 #include "devices/input.h"      /* input_getc() — SYS_READ stdin 분기에서 사용 */
 #include "threads/palloc.h" 	/* SYS_EXEC 에서 palloc_get_page() 인자로 넣을 떄 PAL_ZERO 필요*/
+#include "vm/vm.h"
 
 /* 파일 시스템 락 선언 */
 struct lock filesys_lock;
@@ -63,8 +64,7 @@ syscall_init (void) {
  * 함정: thread_exit()는 NO_RETURN이므로 호출자에서 추가 처리 불필요. */
 static void
 validate_user_addr (const void *uaddr) {
-    if (uaddr == NULL || !is_user_vaddr(uaddr)
-        || pml4_get_page(thread_current()->pml4, uaddr) == NULL) {
+    if (uaddr == NULL || !is_user_vaddr(uaddr)) {
         thread_current()->exit_status = -1;
         thread_exit();
     }
@@ -77,6 +77,8 @@ validate_user_addr (const void *uaddr) {
 void
 syscall_handler (struct intr_frame *f UNUSED) {
 	uint64_t sysno = f->R.rax;
+	thread_current()->tf.rsp = f->rsp;
+	thread_current()->user_rsp = f->rsp;
 
 	switch (sysno) {
 		/* 파일 관련 */
@@ -225,6 +227,23 @@ syscall_handler (struct intr_frame *f UNUSED) {
 					lock_release(&filesys_lock);
 					break;
 				}
+				// writable 체크
+				struct page *p = spt_find_page(&thread_current()->spt, pg_round_down((void *)buffer));
+				// printf("buffer: %p, page: %p, writable: %d\n", buffer, p, p ? p->writable : -1);
+				if (p == NULL) {
+					// 유저 스택 범위인지 확인
+					uintptr_t cur_rsp = thread_current()->user_rsp;
+					if ((uintptr_t)buffer < cur_rsp - 8) {
+						lock_release(&filesys_lock);
+						thread_current()->exit_status = -1;
+						thread_exit();
+					}
+				// 스택 범위 안 → 통과 (page fault로 처리될 것)
+				} else if (!p->writable) {
+					lock_release(&filesys_lock);
+					thread_current()->exit_status = -1;
+					thread_exit();
+					}
 				f->R.rax = file_read(file, buffer, size);
 				lock_release(&filesys_lock);
 			}

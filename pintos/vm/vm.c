@@ -133,6 +133,7 @@ spt_insert_page (struct supplemental_page_table *spt UNUSED,
 
 void
 spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
+	hash_delete (&spt->pages, &page->spt_elem);
 	vm_dealloc_page (page);
 	return true;
 }
@@ -216,23 +217,28 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
         return false;
 
 	// 3. rsp 타입 맞추기
-	void *rsp = (void *)f->rsp;
+	void *rsp;
+
+	if (user)
+		rsp = (void *)f->rsp;
+	else
+		rsp = (void *)thread_current()->user_rsp;
 	
 	// 4. SPT에서 page 찾기
 	page = spt_find_page(spt, addr);
 
 	// 5. page 없으면 스택 확장 가능한지 판단
-	if(page == NULL && addr >= (void *)((uintptr_t)rsp - 8)){
-		vm_stack_growth(addr);
-		return true;
+	if (page == NULL) {
+		void *stack_bottom = (void *)(USER_STACK - (1 << 20));
+		if (addr >= stack_bottom && addr < (void *)USER_STACK
+        && addr >= (void *)((uintptr_t)rsp - 8)) {
+        	vm_stack_growth(addr);
+        return true;
+    }
+    return false;
 	}
-	
-	if (page == NULL){
-		return false;
-	}
-	
-	return vm_do_claim_page (page);
 
+	return vm_do_claim_page (page);
 
 }
 
