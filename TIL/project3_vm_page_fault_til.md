@@ -1408,6 +1408,79 @@ file_read write 성공
 > 페이지 N 장이 SPT 에 들어 있다" 가 정확한 표현. lazy 시스템에서는
 > 페이지 단위가 *유일한* 단위.
 
+###### (7) 그래서 1MB 는 어디서 나오는가 — 스택의 천장과 64KB 의 관계
+
+팀에서 또 한 가지 헷갈렸던 점 — **`1MB` 와 `64KB` 의 관계가 무엇인가**.
+서로 다른 층에 있는 두 숫자다.
+
+`vm_try_handle_fault` 안의 stack growth 휴리스틱 (`vm/vm.c:232`):
+
+```c
+void *stack_bottom = (void *)(USER_STACK - (1 << 20));   /* USER_STACK − 1MB */
+if (addr >= stack_bottom && addr < (void *)USER_STACK
+    && addr >= (void *)((uintptr_t)rsp - 8)) {
+    vm_stack_growth(addr);
+    return true;
+}
+```
+
+여기서 `1 << 20 = 1MB` 가 의미하는 건 **"스택이 자랄 수 있는 천장"**.
+실제 주소로 보면:
+
+```
+주소 ↑ (높음)
+ USER_STACK   = 0x47480000  ─┐                       ← stack top
+                              │
+                              │  이 1MB 범위 안에서만
+                              │  stack growth 가 허용됨
+                              │
+                              │  (fault 의 addr 이 이 안에 들어와야
+                              │   vm_stack_growth 가 불린다)
+                              │
+ stack_bottom = 0x47380000  ─┘                       ← 1MB 하한선
+                              ▼ (이 아래는 stack 으로 못 자람 → kill)
+ 주소 ↓ (낮음)
+```
+
+(USER_STACK 은 `pintos/include/threads/vaddr.h:38` 에 정의된 상수, 1MB
+는 vm.c 의 매직 넘버 — 별도 이름 없이 직접 박혀 있다.)
+
+**64KB 와의 관계**: 둘은 *다른 단위* 의 값이다.
+
+| 숫자 | 의미 | 단위 |
+|---|---|---|
+| `PGSIZE = 4KB` | SPT 가 *한 번에 한 장씩* 등록하는 단위 | 페이지 |
+| `buf2[65536] = 64KB` | 한 변수의 크기 | 단일 프레임 안의 한 지역 변수 |
+| `1MB` | 스택 *전체* 가 자랄 수 있는 최대 누적 크기 | 프로세스 전체 스택 |
+
+즉:
+- 64KB buf2 ≪ 1MB → 단일 변수로서 충분히 천장 안에 들어간다.
+- `sub rsp, 65536` 후 rsp ≈ `USER_STACK − (caller 깊이 + 64KB)`. caller 가
+  수 KB 수준이라면 rsp 는 stack_bottom 에서 **여유 약 940KB**.
+- `buf2 + 32768` 의 페이지 (= rsp + 32KB) 도 같은 1MB 범위 안 → fault
+  handler 의 첫 조건 `addr ≥ stack_bottom` 트리비얼하게 통과.
+
+**만약 `char huge[2 << 20]` (2MB) 였다면?** — `sub rsp, 2MB` 가 rsp 를
+`USER_STACK − 2MB` 정도로 끌어내린다. 그 안의 어떤 페이지를 만지면
+fault → `addr ≥ stack_bottom` 가 **거짓** → vm_stack_growth 호출 안 됨 →
+함수가 false 반환 → §12.4 의 kill 경로로 종료. 컴파일은 되지만 실행
+중에 죽는다.
+
+**왜 하필 1MB?** Pintos 표준 솔루션의 관례. 실제 OS 의 `ulimit -s` (보통
+8MB) 보다 작지만, 단일 user thread 의 stack 을 무제한 허용할 이유는 없
+다. 너무 작으면 정상 프로그램이 죽고, 너무 크면 폭주하는 재귀가 시스템
+을 갉아먹는다 — 1MB 가 그 사이의 절충값.
+
+> **메타 교훈**: 세 숫자가 *세 다른 층* 에 산다.
+> - **4KB (PGSIZE)** — 페이지 단위. fault 가 한 번 일어날 때 등록되는 양.
+> - **64KB (buf2)** — 변수 단위. *잠재적으로* 16 페이지를 차지할 수 있는
+>   영역 (§12.5.1 (5)).
+> - **1MB** — 프로세스 스택의 *총 허용량*. growth 휴리스틱의 천장.
+>
+> "stack 이 자란다" 라는 말이 어느 층의 이야기인지 매번 분리해서 듣자.
+> 1MB 천장 안에서 4KB 씩 등록되는 페이지가 누적되고, 그 누적 중 일부가
+> 64KB 짜리 변수 한 개 영역을 *덮을 수 있게* 된다 — 이게 셋의 관계.
+
 #### 12.5.2 왜 `f->rsp` 를 못 믿는가 — privilege switch 의 메커니즘
 
 x86-64 에서 유저 → 커널 전환이 일어날 때 CPU 가 하는 일:
