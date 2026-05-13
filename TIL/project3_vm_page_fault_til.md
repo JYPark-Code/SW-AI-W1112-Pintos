@@ -39,41 +39,46 @@
 각도가 다르다 — 한쪽은 커밋·시간 축, 한쪽은 기능·범위 축.
 
 ```mermaid
-flowchart LR
+flowchart TB
     classDef done fill:#d4f4dd,stroke:#2d7a3e,color:#1a4a26
     classDef todo fill:#fff8e1,stroke:#888,stroke-dasharray:5 5,color:#555
     classDef bonus fill:#f0f0f0,stroke:#bbb,stroke-dasharray:3 3,color:#777
 
-    subgraph S1["1 · 기반"]
-        SPT["✅ SPT 해시테이블"]:::done
-        FT["✅ frame 할당<br/>(vm_get_frame)"]:::done
+    subgraph Done["✅ 완료 — 이 회고의 범위"]
+        direction LR
+        subgraph S1["1 · 기반"]
+            SPT["✅ SPT 해시"]:::done
+            FT["✅ frame 할당"]:::done
+        end
+        subgraph S2["2 · lazy &amp; fault 분류"]
+            LZ["✅ Anon lazy load"]:::done
+            SU["✅ setup_stack"]:::done
+            SG["✅ stack growth"]:::done
+            FH["✅ fault 분류"]:::done
+            KI["✅ kill (exit -1)"]:::done
+            SV["✅ syscall 검증"]:::done
+        end
+        S1 --> S2
     end
 
-    subgraph S2["2 · lazy & fault 분류"]
-        LZ["✅ Anon lazy load"]:::done
-        SU["✅ setup_stack 초기 1p"]:::done
-        SG["✅ stack growth<br/>(8B · 1MB 룰)"]:::done
-        FH["✅ fault 분류<br/>hit / stack / invalid"]:::done
-        KI["✅ kill 경로<br/>(exit_status = -1)"]:::done
-        SV["✅ syscall 사전검증<br/>(writable · 범위 · user_rsp)"]:::done
+    subgraph Todo["☐ 남은 작업"]
+        direction LR
+        subgraph S3["3 · 프로세스 수명"]
+            CP["☐ SPT copy (fork)"]:::todo
+            KL["☐ SPT kill"]:::todo
+        end
+        subgraph S4["4 · 다음 큰 산"]
+            MM["☐ mmap / munmap"]:::todo
+            SW["☐ swap (anon)"]:::todo
+            FE["☐ file-backed evict"]:::todo
+        end
+        subgraph S5["5 · 보너스"]
+            COW["☐ Copy-on-Write"]:::bonus
+        end
+        S3 --> S4 --> S5
     end
 
-    subgraph S3["3 · 프로세스 수명"]
-        CP["☐ SPT copy<br/>(fork)"]:::todo
-        KL["☐ SPT kill<br/>(exit cleanup)"]:::todo
-    end
-
-    subgraph S4["4 · 다음 큰 산"]
-        MM["☐ mmap / munmap"]:::todo
-        SW["☐ swap in/out (anon)"]:::todo
-        FE["☐ file-backed evict"]:::todo
-    end
-
-    subgraph S5["보너스 (선택)"]
-        COW["☐ copy-on-write"]:::bonus
-    end
-
-    S1 --> S2 --> S3 --> S4 --> S5
+    Done --> Todo
 ```
 
 - **1·2 단계 ✅** 가 이 회고의 범위. 정상 lazy 경로 + 모든 비정상 경로의
@@ -86,8 +91,9 @@ flowchart LR
 - **5 단계 (보너스)** 는 fork 시 페이지를 공유하다 쓰기 시점에 복제 —
   Project 3 의 선택 과제로 남겨둘 수 있다.
 
-대략 **9 노드 중 6 완료** — 절반 조금 넘었다. 단, 무게로 따지면 swap 이
-혼자 한 단계분이라 실제 남은 작업량은 더 크다.
+대략 **14 노드 중 8 완료** — 윗줄이 다 ✅, 아랫줄이 다 ☐ 라 진행 상황이
+한 눈에 보인다. 단, 무게로 따지면 swap 혼자가 한 단계분이라 실제 남은
+작업량은 노드 수보다 더 크다.
 
 | # | 커밋 | 한 일 |
 |---|---|---|
