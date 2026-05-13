@@ -11,7 +11,7 @@
 > | 섹션 | 주제 | 무게중심 |
 > |---|---|---|
 > | §1 | 작업 요약 (이틀 · 6 커밋) | Project 3 전체 지도 · 두 날짜의 커밋 흐름 · 통과한 테스트 10개 |
-> | §2 | 흐름 전체 그림 | "등록 → fault → 매핑 → 로드" 한 장면 |
+> | §2 | 흐름 전체 그림 | 두 장면 — §2.0 "CPU → 스텁 → intr_handler → page_fault → vm_try_handle_fault" 호출 사슬 + 본 다이어그램 "등록 → fault → 매핑 → 로드" |
 > | §3 | `lazy_load_segment` 구현 | aux 구조체, file_seek/read, zero fill |
 > | §4 | `load_segment` 의 aux 전달 패턴 | 함수 포인터 + 클로저 흉내 |
 > | §5 | `vm_try_handle_fault` — 분기 설계 | "lazy load 인가, 스택 확장인가, 진짜 사망인가" |
@@ -217,7 +217,223 @@ flowchart TD
 
 ## 2. 흐름 전체 그림
 
-이 한 장이 머릿속에서 깔끔히 정리된 것이 가장 큰 수확이다.
+이 절은 두 개의 그림으로 나뉜다.
+
+- **§2.0** — `vm_try_handle_fault` 가 *어떻게 호출되어 들어오는가*. CPU 가
+  `#PF` 를 일으킨 순간부터 우리가 짠 C 함수에 진입할 때까지의 사슬.
+- **§2 본 다이어그램** — `vm_try_handle_fault` 가 호출된 *다음에* 무엇을
+  하는가. SPT 조회 · 스택 확장 휴리스틱 · `vm_do_claim_page` 까지의 분기와
+  매핑/로드.
+
+두 그림이 합쳐져야 "page fault 처리" 의 전 구간이 된다.
+
+### 2.0 호출 사슬 — page fault 가 `vm_try_handle_fault` 에 도달하기까지
+
+#### 2.0.1 핵심 결론 한 줄
+
+> `vm_try_handle_fault` 는 **`exception.c:146`** 단 한 곳에서만 호출된다.
+> `page_fault` 는 **`interrupt.c:352`** 의 *함수 포인터 한 줄* 에서만
+> 호출된다 (`handler(frame);`). 그래서 `grep page_fault pintos/` 로는
+> 호출자가 안 보인다 — 함수 이름이 아니라 **`intr_handlers[14]`** 라는
+> 테이블 슬롯을 통해 간접 호출되기 때문.
+
+#### 2.0.2 두 단계로 나눠 본다 — "등록(한 번)" 과 "디스패치(매 fault 마다)"
+
+페이지 폴트 처리에 등장하는 코드는 시간 축이 다르다.
+
+| 시점 | 누가 | 무엇을 |
+|---|---|---|
+| **부팅 시 (한 번)** | `exception_init()` | `page_fault` 함수 포인터를 `intr_handlers[14]` 에 박고, `idt[14]` 게이트를 어셈블리 스텁으로 향하게 만든다 |
+| **매 #PF 마다** | CPU → 스텁 → `intr_handler` → `page_fault` → `vm_try_handle_fault` | 위에서 등록해 둔 포인터를 따라 5 단계 dispatch |
+
+이 두 시점을 섞으면 "왜 grep 으로 호출자가 안 보이지?" 에서 막힌다.
+**등록 코드가 호출 관계를 만드는 것이고, 매 fault 의 코드는 그 관계를
+따라갈 뿐이다.**
+
+#### 2.0.3 등록 단계 — `intr_handlers[14] = page_fault` 가 박히는 순간
+
+```c
+// userprog/exception.c:60  (exception_init 안)
+intr_register_int (14, 0, INTR_OFF, page_fault, "#PF Page-Fault Exception");
+```
+
+`intr_register_int` 는 안에서 `register_handler` 를 부르고, 거기서
+**두 개의 테이블에 동시에 박는다**.
+
+```c
+// threads/interrupt.c:210  (register_handler)
+intr_handlers[vec_no] = handler;                     // intr_handlers[14] = page_fault
+make_intr_gate (&idt[vec_no], intr_stubs[vec_no], dpl);  // idt[14] → intr_stubs[14]
+```
+
+| 테이블 | 들어가는 값 | 보는 주체 |
+|---|---|---|
+| `idt[14]` | 어셈블리 스텁 `intr_stubs[14]` 의 주소 | **CPU 하드웨어** (IDTR 레지스터를 통해) |
+| `intr_handlers[14]` | C 함수 `page_fault` 의 주소 | **`intr_handler()` 의 한 줄** (`interrupt.c:350`) |
+
+스텁은 모든 벡터마다 따로 있고 (`intr-stubs.S` 의 `STUB(14, zero)`),
+C 핸들러는 한 함수(`intr_handler`)로 모인다. 이 "벡터마다 다른 스텁 → 공통
+C 함수 → 벡터별 함수 포인터" 구조가 모든 인터럽트/예외에 공통이다.
+
+#### 2.0.4 디스패치 단계 — CPU 가 #PF 를 일으킨 순간부터 5단계
+
+```
+[0] 유저(또는 커널) 코드가 매핑 안 된 가상주소 접근
+        예: mov rax, [code_base]      ← code_base 는 SPT 에만 있고 PT 엔 없음
+
+  ▼ CPU 하드웨어가 #PF 처리
+[1] CPU: 하드웨어 동작                                   ← 우리 코드 0줄
+      ① 잘못된 va 를 CR2 에 박는다
+      ② error code 를 스택에 푸시 (PF_P / PF_W / PF_U 비트)
+      ③ IF=0 으로 만든다 (INTR_OFF 게이트라서)
+      ④ IDT[14] → intr_stubs[14] 로 점프
+
+  ▼
+[2] 어셈블리 스텁: threads/intr-stubs.S  STUB(14, zero)   ← 우리 코드 0줄
+      ① 모든 레지스터를 스택에 푸시해서 struct intr_frame 을 만든다
+      ② vec_no = 14 를 frame 안에 넣는다
+      ③ call intr_handler                  (interrupt.c:332)
+
+  ▼
+[3] C 디스패처: intr_handler (threads/interrupt.c:332)    ← 우리 코드 0줄
+      handler = intr_handlers[frame->vec_no];   // == page_fault
+      if (handler != NULL)
+          handler (frame);                       ← 여기 (line 352) 가
+                                                   page_fault 의 유일한 호출자
+
+  ▼
+[4] page_fault (userprog/exception.c:121)                 ← Pintos 가 제공
+      ① fault_addr = rcr2();                  CR2 에서 fault 주소 읽기
+      ② intr_enable();                        CR2 다 읽었으니 인터럽트 켜기
+      ③ not_present/write/user = error_code 비트필드 파싱
+      ④ #ifdef VM
+           if (vm_try_handle_fault(f, fault_addr, user, write, not_present))
+               return;                       ← 우리 함수의 유일한 호출자
+                                               (exception.c:146)
+         #endif
+         kill(f);                              ← false 면 프로세스 종료
+
+  ▼
+[5] vm_try_handle_fault (vm/vm.c:196)                     ← 우리가 짠 곳
+      §2 본 다이어그램으로 이어진다.
+```
+
+각 단계의 "우리 코드 0줄" 이라는 메모가 중요하다. **[1]~[3] 은 한 줄도
+손대지 않는다.** 우리가 짠 코드는 [5] 의 본체와 [4] 가 부르는 `#ifdef VM`
+블록 한 줄뿐이다. 그래서 "어디서 호출되는지" 가 안 보이는 것이다 — 호출
+지점은 본인이 안 짠 곳에 있다.
+
+#### 2.0.5 시각화
+
+```
+   ┌────────────────────────────────────────────────────────────┐
+   │  부팅 시 한 번 (exception_init)                            │
+   │                                                            │
+   │     intr_register_int(14, 0, INTR_OFF, page_fault, ...)    │
+   │            │              │                                │
+   │            ▼              ▼                                │
+   │      idt[14] := stub   intr_handlers[14] := page_fault     │
+   └────────────────────────────────────────────────────────────┘
+
+   ┌────────────────────────────────────────────────────────────┐
+   │  매 #PF 마다                                               │
+   │                                                            │
+   │   [user code]  mov rax, [unmapped_va]                      │
+   │       │                                                    │
+   │       │ CPU: CR2=va, push error_code, IF=0,                │
+   │       │      jump to idt[14] target                        │
+   │       ▼                                                    │
+   │   intr_stubs[14]  (intr-stubs.S, asm)                      │
+   │       │ build intr_frame, vec_no=14                        │
+   │       │ call intr_handler                                  │
+   │       ▼                                                    │
+   │   intr_handler  (interrupt.c:332)                          │
+   │       │ handler = intr_handlers[14];   // == page_fault    │
+   │       │ handler(frame);   ← 유일한 page_fault 호출 지점    │
+   │       ▼                                                    │
+   │   page_fault  (exception.c:121)                            │
+   │       │ rcr2, intr_enable, parse error_code                │
+   │       │ vm_try_handle_fault(f, addr, user, write, np);     │
+   │       │   ← 유일한 vm_try_handle_fault 호출 지점           │
+   │       ▼                                                    │
+   │   vm_try_handle_fault  (vm.c:196)  ← 우리가 짠 곳          │
+   │       │                                                    │
+   │       ├─ true  → page_fault 가 return     → CPU 가         │
+   │       │                                     faulting       │
+   │       │                                     명령어 재실행   │
+   │       └─ false → page_fault 가 kill(f)    → exit(-1)       │
+   └────────────────────────────────────────────────────────────┘
+```
+
+#### 2.0.6 왜 grep 으로 호출자가 안 보이는가 — 두 단계 dispatch
+
+```
+[A] 하드웨어 dispatch:  CPU  ──(IDTR 레지스터)──▶  idt[14]  ──▶  intr_stubs[14]
+                                                        (벡터 번호 → 어셈블리 스텁)
+
+[B] 소프트웨어 dispatch: intr_handler  ──(frame->vec_no)──▶  intr_handlers[14]  ──▶  page_fault
+                                                        (벡터 번호 → C 함수 포인터)
+```
+
+`page_fault` 와 `vm_try_handle_fault` 둘 다 **테이블의 슬롯을 통해 간접
+호출**된다는 점이 같다. `grep page_fault` 로는 [B] 의 호출 줄
+(`handler(frame);`) 에 "page_fault" 라는 글자가 없어서 안 잡힌다. 호출
+관계를 찾으려면 **이름 grep 이 아니라 등록 함수(`intr_register_int`) 의
+인자를 grep** 해야 한다.
+
+```bash
+grep -n "intr_register_int.*page_fault" pintos/userprog/exception.c
+# → 60: intr_register_int (14, 0, INTR_OFF, page_fault, "#PF Page-Fault Exception");
+```
+
+이 한 줄이 "page_fault 가 누구에게 호출되는가" 의 답이다 — *벡터 14 가 들어
+오면 호출됩니다.*
+
+#### 2.0.7 디테일 — `INTR_OFF` 와 CR2 보호의 짝
+
+`intr_register_int (14, 0, INTR_OFF, page_fault, ...)` 의 `INTR_OFF` 는
+`register_handler` 안에서 `make_intr_gate` 를 부르게 만든다 (vs `INTR_ON`
+이면 `make_trap_gate`). 차이는 **게이트 진입 순간 CPU 가 IF 를 자동으로
+0으로 만드느냐** 다.
+
+왜 page_fault 에서만 이걸 켜는가? **CR2 가 다음 인터럽트로 덮이지 않게
+보호하기 위해.** CR2 는 CPU 의 단 하나뿐인 레지스터고, 다른 #PF 가 나면
+바로 덮어쓰여진다. 그래서:
+
+```c
+// userprog/exception.c:121-136
+static void
+page_fault (struct intr_frame *f) {
+    ...
+    fault_addr = (void *) rcr2();   // 1. 다른 인터럽트 들어오기 전에 CR2 부터 읽고
+    intr_enable ();                  // 2. 다 읽었으니 인터럽트 다시 켠다
+    ...
+}
+```
+
+`intr_enable()` 가 *읽은 직후* 에 호출되는 게 핵심이다. 이 두 줄의 순서는
+바꾸면 안 된다 — 바꾸면 매우 드물지만 CR2 가 다른 fault 로 덮여서 엉뚱한
+주소로 처리하게 된다.
+
+#### 2.0.8 메타 교훈
+
+1. **"누가 부르는가?" 를 함수 이름 grep 으로 찾을 수 없을 때는 *등록 함수의
+   인자* 를 grep 한다.** 함수 포인터 기반 dispatch (`intr_handlers[]`,
+   vtable, callback registry 등) 에서는 호출 관계가 *등록 코드* 에 박힌다.
+2. **하드웨어 dispatch 와 소프트웨어 dispatch 는 보통 짝지어 다닌다.**
+   `idt[]` 는 CPU 가 보고, `intr_handlers[]` 는 C 코드가 본다. 한쪽은
+   어셈블리 진입점을, 한쪽은 C 함수 진입점을 가리킨다. 같은 등록 함수가
+   두 테이블을 함께 채우기 때문에 두 테이블이 항상 일관된다.
+3. **"우리가 안 짠 코드" 의 경계를 안다는 것이 디버깅의 시작점이다.**
+   `vm_try_handle_fault` 까지의 [1]~[3] 단계는 우리가 한 줄도 안 짰다 —
+   그래서 거기서 뭔가 잘못된 거 같으면 우리 코드를 의심하기 전에 **frame /
+   error_code / fault_addr 의 값이 들어오는 방식을 의심** 해야 한다. 예:
+   "f->rsp 가 커널 rsp 라서 못 믿는다" 가 §12.5 의 핵심 함정이었다.
+4. **`grep -rn vm_try_handle_fault pintos/` 를 자주 해라.** 호출자가 단
+   하나(`exception.c:146`)임을 1초 만에 확인할 수 있다. 본인이 짠 함수의
+   호출 지점이 *어디서* / *몇 군데인지* 를 항상 알고 있어야 한다.
+
+---
 
 ```
 [ELF 로딩 시점 — load_segment]
