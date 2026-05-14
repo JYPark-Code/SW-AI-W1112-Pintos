@@ -1,265 +1,68 @@
-# 2026-04-24 Meeting Contents
+# Pintos Project 3 — Virtual Memory
 
-## 주요 안건
+KAIST 64비트 Pintos 기반 VM 프로젝트 (3~4주차)
 
-### 1. 스크럼 시간 (토, 월, 화, 수)
+---
 
-`매일 아침 10시 30분`  
-`하루 과제 볼륨 선정 - 매일 스프린트 범위 선정`
+## 코어타임
 
-- `깃 북 공부범위`
-- `테스트 범위`
+매일 밤 9시
 
-`매일 A, B, C, D 멤버 변경`
+각자 개발한 것, 학습한 것 중 이해가 안 되는 부분 또는 이야기하고 싶은 것을 자유롭게 토론합니다.
 
-### 2. 코어타임 시간
+---
 
-`매일 밤 10시`  
-https://casys-kaist.github.io/pintos-kaist/project1/introduction.html
-
-1. `pintos-kaist docs [git book] - homework scope discussion`
-2. `개념 공부 1topic 1quiz - 인당 5 ~ 10분`
-3. `코드 리뷰`
-   - [A, B] 정해진 것 리뷰 [C, D] 정해진 것 리뷰
-     - `먼저 코어타임 전에 한 번 맞출것 정해두기 필수`
-     - `매일 A, B, C, D 멤버 변경`
-   - 전체적으로 A, B, C, D 코드 리뷰 후 머지
-
-### 3. 팀내 룰
-
-1. 공사구분 확실히 (상호 존대)
-2. 긴 대화는 슬랙으로 먼저 요청
-3. 공부하기로 한 약속한 범위는 반드시 해오기
-
-### 4. 깃 헙 브랜치 전략
-
-`매일 밤 Merge 후 A + B, C + D 브랜치는 Merge 후 Pull 받고 마무리(최신화 유지)`
-
-- Main
-  - dev
-    - A + B
-      - A
-      - B
-    - C + D
-      - C
-      - D
-
-### 4. 진행할 내용
-
+## 브랜치 전략
 ```
-테스트 내용은 여기서 선정
-Alarm Clock -> Priority Scheduling -> Priority Donation -> MLFQS
+main
+├── 팀원 A 브랜치
+├── 팀원 B 브랜치
+├── 팀원 C 브랜치
+└── 팀원 D 브랜치
 ```
 
-`토 + 월 + 화` 까지 마무리 하고 `수요일` 때 마지막 합병 후 발표 준비
-
-# 📘 Docker기반 Pintos 개발 환경 구축 가이드 
-
-이 문서는 **Windows**와 **macOS** 사용자가 Docker와 VSCode DevContainer 기능을 활용하여 Pintos OS 프로젝트를 빠르게 구축할 수 있도록 도와줍니다.
-
-[**주의**]
-* ubunbu:22.04 버전은 충분한 테스트와 검증이 되지 않았습니다. 이 점을 주의해서 사용하시기 바랍니다.
-
-[**참고**] 
-* pintos 도커 환경은 `64비트 기반 X86-64` 기반의 `ubuntu:22.04` 버전을 사용합니다.
-   * kaist-pintos는 오리지널 pintos와 달리 64비트 환경을 지원합니다.
-   * 이번 도커 환경은 ubuntu 22.04를 지원하여 vscode의 최신 버전에서 원격 연결이 안되는 문제를 해결하였습니다.
-* pintos 도커 환경은 kaist-pintos에서 추천하는 qemu 에뮬레이터를 설치하고 사용합니다. 
-* pintos 도커 환경은 9주차부터 13주차까지 같은 환경을 사용합니다. 이 기간동안 별도의 개발 환경을 제공하지 않습니다.
-* 기존 도커 환경과 달리 `vscode`와 통합된 디버깅 환경(F5로 시작하는)을 제공하지 않습니다. 디버깅이 필요한 경우 `gdb`를 사용하세요. 
-* vscode에서 터미널을 오픈하면 자동으로 `source /workspaces/pintos_22.04_lab_docker/pintos/activate`를 실행합니다.
+각자 개인 브랜치에서 작업 후 main에 머지합니다.
 
 ---
 
-## 1. Docker란 무엇인가요?
+## 진행 현황
 
-**Docker**는 애플리케이션을 어떤 컴퓨터에서든 **동일한 환경에서 실행**할 수 있게 도와주는 **가상화 플랫폼**입니다.  
+### Project 3 — Virtual Memory
 
-Docker는 다음 구성요소로 이루어져 있습니다:
-
-- **Docker Engine**: 컨테이너를 실행하는 핵심 서비스
-- **Docker Image**: 컨테이너 생성에 사용되는 템플릿 (레시피 📃)
-- **Docker Container**: 이미지를 기반으로 생성된 실제 실행 환경 (요리 🍜)
-
-### ✅ AWS EC2와의 차이점
-
-| 구분 | EC2 같은 VM | Docker 컨테이너 |
-|------|-------------|-----------------|
-| 실행 단위 | OS 포함 전체 | 애플리케이션 단위 |
-| 실행 속도 | 느림 (수십 초 이상) | 매우 빠름 (거의 즉시) |
-| 리소스 사용 | 무거움 | 가벼움 |
-
----
-
-## 2. VSCode DevContainer란 무엇인가요?
-
-**DevContainer**는 VSCode에서 Docker 컨테이너를 **개발 환경**처럼 사용할 수 있게 해주는 기능입니다.
-
-- 코드를 실행하거나 디버깅할 때 **컨테이너 내부 환경에서 동작**
-- 팀원 간 **환경 차이 없이 동일한 개발 환경 구성** 가능
-- `.devcontainer` 폴더에 정의된 설정을 VSCode가 읽어 자동 구성
-
----
-
-## 3. Docker Desktop 설치하기
-
-1. Docker 공식 사이트에서 설치 파일 다운로드:  
-   👉 [https://www.docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop)
-
-2. 설치 후 Docker Desktop 실행  
-   - Windows: Docker 아이콘이 트레이에 떠야 함  
-   - macOS: 상단 메뉴바에 Docker 아이콘 확인
-
----
-
-## 4. 프로젝트 파일 다운로드 (히스토리 없이)
-
-터미널(CMD, PowerShell, zsh 등)에서 아래 명령어로 프로젝트 폴더만 내려받습니다:
-
-```bash
-git clone --depth=1 https://github.com/krafton-jungle/pintos_22.04_lab_docker.git 
-```
-
-- `--depth=1` 옵션은 git commit 히스토리를 생략하고 **최신 파일만 가져옵니다.**
-
-### 📂 다운로드 후 폴더 구조 설명
-
-```
-pintos_22.04_lab_docker/
-├── .devcontainer/
-│   ├── devcontainer.json      # VSCode에서 컨테이너 환경 설정
-│   └── Dockerfile             # pintos 개발 환경 도커 이미지 정의
-│
-├── pintos
-│   ├── threads                # 9주차 threads 프로젝트 폴더
-│   ├── userprog               # 10-11주차 user program 프로젝트 폴더
-│   └── vm                     # 12-13주차 virtual memory 프로젝트 폴더
-│
-└── README.md                  # 현재 문서
-```
----
-
-## 5. VSCode에서 해당 프로젝트 폴더 열기
-
-1. VSCode를 실행
-2. `파일 → 폴더 열기`로 방금 클론한 `pintos_22.04_lab_docker` 폴더를 선택
-
----
-
-## 6. 개발 컨테이너: 컨테이너에서 열기
-
-1. VSCode에서 `Ctrl+Shift+P` (Windows/Linux) 또는 `Cmd+Shift+P` (macOS)를 누릅니다.
-2. 명령어 팔레트에서 `Dev Containers: Reopen in Container`를 선택합니다.
-3. 이후 컨테이너가 자동으로 실행되고 빌드됩니다. 처음 컨테이너를 열면 빌드하는 시간이 오래걸릴 수 있습니다. 빌드 후, 프로젝트가 **컨테이너 안에서 실행됨**.
-
----
-
-## 7. C 파일에 브레이크포인트 설정 후 디버깅 (F5)
-pintos 랩에서는 vscode기반의 디버깅을 지원하지 않습니다. 
-
----
-## 8. 새로운 Git 리포지토리에 Commit & Push 하기
-
-금주 프로젝트를 개인 Git 리포와 같은 다른 리포지토리에 업로드하려면, 기존 Git 연결을 제거하고 새롭게 초기화해야 합니다.
-
-### ✅ 완전히 새로운 Git 리포로 업로드하는 방법
-
-아래 명령어를 순서대로 실행하세요:
-
-```bash
-rm -rf .git
-git init
-git remote add origin https://github.com/myusername/my-new-repo.git
-git add .
-git commit -m "Clean start"
-git push -u origin main
-```
-
-### 📌 설명
-
-- `rm -rf .git`: 기존 Git 기록과 연결을 완전히 삭제합니다.
-- `git init`: 현재 폴더를 새로운 Git 리포지토리로 초기화합니다.
-- `git remote add origin ...`: 새로운 리포지토리 주소를 origin으로 등록합니다.
-- `git add .` 및 `git commit`: 모든 파일을 커밋합니다.
-- `git push`: 새로운 리포에 최초 업로드(Push)합니다.
-
-이 과정을 거치면 기존 리포와의 연결은 완전히 제거되고, **새로운 독립적인 프로젝트로 관리**할 수 있습니다.
-
----
-
-## 9. 테스트 최적화 도구 (select_test.sh) 사용법
-
-`pintos-util-main` 기반의 테스트 선택 실행기입니다. 원하는 테스트만 골라 돌리고, PASS/FAIL 결과를 캐싱하여 메뉴에 색으로 표시합니다.
-
-### 📂 설치 위치
-
-| 파일 | 위치 |
+| 항목 | 상태 |
 |------|------|
-| `launch.json` | `.vscode/launch.json` (워크스페이스 루트) |
-| `select_test.sh`, `.test_config` | `pintos/threads/`, `pintos/userprog/`, `pintos/vm/` 각 프로젝트 폴더 |
+| SPT (해시테이블, 페이지 삽입/탐색) | ✅ 완료 |
+| Lazy loading | ✅ 완료 |
+| Stack growth | ✅ 완료 |
+| Page fault 처리 및 syscall buffer 검증 | ✅ 완료 |
+| supplemental_page_table_copy (fork) | 🔄 진행 중 |
+| supplemental_page_table_kill | 🔄 진행 중 |
+| Swap in/out (clock algorithm) | ❌ 미구현 |
+| mmap / munmap | ❌ 미구현 |
 
-> Threads 프로젝트는 이미 설치되어 있습니다. UserProgram/VM은 진입 시 아래 "다른 프로젝트 진입 시 설치"를 참고하세요.
+### 통과한 테스트
 
-### 🚀 기본 명령어 (Threads 기준)
+**pt 테스트 (8/8)**
+- pt-grow-stack, pt-grow-bad, pt-big-stk-obj
+- pt-bad-addr, pt-bad-read, pt-write-code, pt-write-code2, pt-grow-stk-sc
 
-```bash
-cd pintos/threads
+**page 테스트 (2/9)**
+- page-linear, page-shuffle
+- 나머지는 fork SPT 복제 구현 후 통과 예정
 
-# 1) 테스트 결과만 확인 (배치 실행, GDB 미사용)
-./select_test.sh -q
+---
 
-# 2) 코드를 수정한 뒤 재빌드 + 실행
-./select_test.sh -q -r
-
-# 3) VSCode + GDB 디버깅 모드 (중단점 사용)
-./select_test.sh -g -r
-
-# 4) 통과/실패 캐시(색상 표시) 초기화
-rm .test_status
-```
-
-- `-q` : quick, 배치 모드 (디버거 미사용)
-- `-g` : gdb stub 모드, VSCode "Pintos Debug" 디버그를 함께 시작
-- `-r` : rebuild, `make clean && make all -j$(nproc)`로 재빌드 후 실행
-
-### 🖱️ 테스트 선택 방법
-
-스크립트 실행 후 메뉴가 뜨면 번호를 공백/하이픈으로 입력합니다.
-
-```
-Enter test numbers (e.g. '1 3 5' or '2-4'): 1-5 9 11-13
-```
-
-→ {1, 2, 3, 4, 5, 9, 11, 12, 13}번 테스트가 순차 실행됩니다.
-
-- 🟢 초록 = 이전에 PASS / 🔴 빨강 = 이전에 FAIL / 흰색 = 미실행
-- 결과는 `.test_status`에 자동 저장
-
-### 🐞 GDB 디버깅 흐름 (`-g`)
-
-1. C 코드에 중단점(F9) 설정
-2. `./select_test.sh -g -r` 실행 → 테스트 번호 입력
-3. QEMU가 `localhost:1234`에서 대기하면 VSCode 좌측 디버그 패널에서 해당 주차 디버그 구성 선택 후 ▶ 실행
-   - `[Week 9] Threads Debug`
-   - `[Week 10-11] User Program Debug`
-   - `[Week 12-13] VM Debug`
-4. 여러 테스트를 연속 디버그하면 다음 테스트 시작 시 디버그 ▶ 버튼을 다시 눌러줍니다.
-
-### 🛠️ 다른 프로젝트 진입 시 설치 (UserProgram/VM)
+## 테스트 실행
 
 ```bash
-# 예: UserProgram 진입 시
-cd pintos/userprog
-cp ../../pintos-util-main/userprog/select_test.sh .
-chmod +x select_test.sh
-
-# .test_config 자동 생성 (userprog/vm 한정 — generate_test_config.py가 정상 동작)
-source ../activate
-make -k check > /tmp/userprog-make-check.txt 2>&1
-python3 ../../pintos-util-main/generate_test_config.py \
-    < /tmp/userprog-make-check.txt > .test_config
+cd pintos/vm
+./select_test.sh -q      # 테스트 실행
+./select_test.sh -q -r   # 재빌드 후 테스트 실행
+rm .test_status          # 캐시 초기화
 ```
 
-VM도 동일하게 `pintos/vm/`에서 같은 절차로 설치합니다.
+---
 
-> Threads는 `make check` 출력 포맷이 달라 `.test_config`를 손으로 작성해두었으니 위 자동 생성 단계는 불필요합니다.
+## 참고 자료
+
+- [KAIST Pintos Docs](https://casys-kaist.github.io/pintos-kaist/)
