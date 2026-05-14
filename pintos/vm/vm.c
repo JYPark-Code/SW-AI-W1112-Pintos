@@ -5,6 +5,8 @@
 #include "vm/inspect.h"
 #include "threads/vaddr.h"
 #include "threads/mmu.h"
+#include "userprog/process.h"
+#include <string.h>
 
 // va를 해시값으로 변환
 static uint64_t page_hash(const struct hash_elem *e, void *aux UNUSED){
@@ -16,6 +18,17 @@ static bool page_less(const struct hash_elem *a, const struct hash_elem *b, void
 	struct page *pa = hash_entry(a, struct page, spt_elem);
     struct page *pb = hash_entry(b, struct page, spt_elem);
     return pa->va < pb->va;
+}
+
+// spt_kill을 위한 콜백함수
+static void
+page_destructor (struct hash_elem *e, void *aux UNUSED) {
+    struct page *page = hash_entry(e, struct page, spt_elem);
+    if (page->frame != NULL) {
+        free(page->frame);
+        page->frame = NULL;
+    }
+    vm_dealloc_page(page);
 }
 
 
@@ -292,6 +305,47 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 bool
 supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		struct supplemental_page_table *src UNUSED) {
+
+		// src의 모든 페이지를 순회
+		struct hash_iterator i;
+		hash_first(&i, &src->pages);
+		while (hash_next(&i)){
+			struct page *src_page = hash_entry(hash_cur(&i), struct page, spt_elem);
+
+			// 페이지 타입에 따라 다르게 복제
+			switch (VM_TYPE(src_page->operations->type)) {
+				case VM_UNINIT: {
+					struct uninit_page *uninit = &src_page->uninit;
+					struct lazy_load_aux *new_aux = malloc(sizeof(struct lazy_load_aux));
+					if (uninit->aux != NULL) {
+						new_aux = malloc(sizeof(struct lazy_load_aux));
+						memcpy(new_aux, uninit->aux, sizeof(struct lazy_load_aux));
+					}
+					vm_alloc_page_with_initializer(
+						uninit->type,        // type
+						src_page->va,        // va
+						src_page->writable,        // writable
+						uninit->init,        // init
+						new_aux         // aux
+					);
+					break;
+				}
+				case VM_ANON: {
+					vm_alloc_page(src_page->operations->type, 
+							      src_page->va, 
+								  src_page->writable);
+					vm_claim_page(src_page->va);
+					struct page *dst_page = spt_find_page(dst, src_page->va);
+					memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
+					break;
+				}
+				case VM_FILE:{
+					break;
+				}
+			}
+		}
+		return true;
+
 }
 
 /* Free the resource hold by the supplemental page table */
@@ -299,4 +353,5 @@ void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
+	hash_destroy(&spt->pages, page_destructor);
 }

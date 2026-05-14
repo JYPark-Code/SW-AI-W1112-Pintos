@@ -30,14 +30,6 @@ static void __do_fork (void *);
 
 #define ARGV_MAX 64     /* 인자 개수 상한 (args-many 테스트 기준 22개로 충분) */
 
-/* lazy_load_segment에 전달할 파일 정보 */
-struct lazy_load_aux {
-    struct file *file;
-    off_t offset;
-    size_t read_bytes;
-    size_t zero_bytes;
-};
-
 /* __do_fork()로 부모 정보를 전달하기 위한 묶음 구조체.
  * thread_create()의 aux는 void* 한 개만 받을 수 있는데,
  * fork에서는 (1) 부모 스레드 포인터(children 리스트 등록용)와
@@ -381,6 +373,16 @@ process_exec (void *f_name) {
 	 *   종료 메시지의 프로세스 이름이 바뀌어 fail. */
 	strlcpy (thread_current ()->name, argv[0],
 	         sizeof thread_current ()->name);
+
+	/* load()가 새 페이지 테이블과 새 SPT를 만들기 시작하므로
+	그 전에 기존 SPT를 정리해야 메모리 누수 없이 깔끔하게 교체됨 */
+	#ifdef VM
+    // printf("before kill: exit_status=%d\n", thread_current()->exit_status);
+    supplemental_page_table_kill(&thread_current()->spt);
+    // printf("after kill: exit_status=%d\n", thread_current()->exit_status);
+    supplemental_page_table_init(&thread_current()->spt);
+	#endif
+
 
 	/* load()에는 프로그램 이름(argv[0])만 넘긴다.
 	 * 나머지 인자는 argument_stack()에서 유저 스택에 직접 쓴다. */

@@ -386,6 +386,36 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 		}
 
+		case SYS_SEEK: {
+			int fd = (int) f->R.rdi;
+			off_t position = (off_t) f->R.rsi;
+			
+			lock_acquire(&filesys_lock);
+			if (fd >= 2 && fd < 128) {
+				struct file *file = thread_current()->fd_table[fd];
+				if (file != NULL)
+					file_seek(file, position);
+			}
+			lock_release(&filesys_lock);
+			break;
+		}
+
+		case SYS_TELL: {
+			int fd = (int) f->R.rdi;
+			lock_acquire(&filesys_lock);
+			if (fd >= 2 && fd < 128) {
+				struct file *file = thread_current()->fd_table[fd];
+				if (file != NULL)
+					f->R.rax = file_tell(file);
+				else
+					f->R.rax = -1;
+			} else {
+				f->R.rax = -1;
+			}
+			lock_release(&filesys_lock);
+			break;
+		}
+
 		/* SYS_WAIT: 자식 tid가 종료할 때까지 대기 후 exit_status 회수.
 		 * 인자: rdi=자식 tid
 		 * 반환: 자식의 exit_status, 잘못된 tid이거나 이미 wait한 경우 -1
@@ -408,6 +438,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			 * process_exit()의 종료 메시지 출력에도 사용된다.
 			 * thread_exit()가 process_exit()를 호출하므로 별도 호출 불필요. */
 			int status = (int) f->R.rdi;
+			// printf("SYS_EXIT called: status=%d\n", status);
 			thread_current ()->exit_status = status;
 			thread_exit ();
 			NOT_REACHED ();

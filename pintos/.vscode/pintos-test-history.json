@@ -470,28 +470,28 @@
       "last_action": "run"
     },
     "tests/vm/page-parallel": {
-      "count": 9,
-      "last_used": 1778648587.753,
+      "count": 17,
+      "last_used": 1778743155.824,
       "last_action": "run"
     },
     "tests/vm/page-merge-seq": {
-      "count": 9,
-      "last_used": 1778648587.753,
+      "count": 19,
+      "last_used": 1778743390.824,
       "last_action": "run"
     },
     "tests/vm/page-merge-par": {
-      "count": 9,
-      "last_used": 1778648587.753,
+      "count": 10,
+      "last_used": 1778743471.414,
       "last_action": "run"
     },
     "tests/vm/page-merge-stk": {
-      "count": 9,
-      "last_used": 1778648587.753,
+      "count": 10,
+      "last_used": 1778743471.414,
       "last_action": "run"
     },
     "tests/vm/page-merge-mm": {
-      "count": 9,
-      "last_used": 1778648587.753,
+      "count": 10,
+      "last_used": 1778743471.414,
       "last_action": "run"
     },
     "tests/vm/page-shuffle": {
