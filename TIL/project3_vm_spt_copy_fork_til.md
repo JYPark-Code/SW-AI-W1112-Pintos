@@ -21,6 +21,7 @@
 > | §8 | 디버깅 2: **double free** — `page_destructor` 의 경계선 | 누가 palloc 페이지를 푸는가 (`pml4_destroy` vs. 우리) |
 > | §9 | 디버깅 3: **`page-merge-*` 의 메모리 부족 PANIC** | 1MB+ 버퍼 fork → swap 없이는 못 넘는 벽 |
 > | §10 | 다음 작업 | swap (anon → disk, clock) · mmap/munmap · merge 계열 |
+> | §11 | 코어타임 토론 — `vm_handle_wp` 빈 함수 + "SPT 있고 read 멀쩡한데 fault?" | CoW 훅의 정체 · SPT 와 PTE 의 분리라는 한 가지 관점 |
 
 ---
 
@@ -422,3 +423,172 @@ default 케이스 → thread_exit() (exit_status 초기값 0 그대로)
 
 > 다음 회고는 `page-merge-*` 통과 또는 mmap 첫 통과 시점이 자연스러운
 > 단락.
+
+---
+
+## 11. 코어타임 토론 — `vm_handle_wp` 와 "SPT 있고 read 멀쩡한데 fault?"
+
+오늘 코어타임에서 한 사람이 가져온 질문 두 개. 둘 다 *같은 코드 조각*
+(`vm.c` 의 빈 `vm_handle_wp`) 에서 출발해서 **SPT 와 PTE 를 분리해서 보는
+한 가지 관점** 으로 동시에 풀린다. 정리해 두면 다음에 같은 질문이 또
+나왔을 때 그대로 꺼내 쓸 수 있다.
+
+### 11.1 질문 1 — "`vm_handle_wp` 가 비어 있는데 이게 맞나요?"
+
+가져온 코드 (우리 `vm.c:201-204` 와 동일):
+
+```c
+/* Handle the fault on write_protected page */
+static bool
+vm_handle_wp (struct page *page UNUSED) {
+}
+```
+
+**결론** — 비워두는 게 정상. `vm_handle_wp` 는 **Copy-on-Write 보너스 훅**
+이라, CoW 를 만들지 않는 한 호출되는 경로 자체가 없다.
+
+증거 — `vm.c` 전체에서 grep 해보면 *정의 한 줄 + 주석 한 줄* 뿐:
+
+```
+202:  /* Handle the fault on write_protected page */
+203:  static bool
+204:  vm_handle_wp (struct page *page UNUSED) {
+```
+
+→ 어디서도 호출하지 않음. `static` + `UNUSED` 라 컴파일러 경고도 없음.
+실행 흐름이 절대 도달하지 않는 함수가 비어 있어도 무해.
+
+#### "write-protected page fault" 의 위치
+
+페이지 fault 의 원인을 두 갈래로 보면:
+
+| `not_present` | 무슨 의미 | 어떻게 처리 중인가 |
+|---|---|---|
+| **true** | PTE 가 없다 — lazy / swap-out / stack growth / invalid | `vm_try_handle_fault` 의 첫 분기 |
+| **false** | PTE 는 있는데 권한 위반 (RO 페이지에 write 등) | 지금은 `kill()` 로 보냄 → `pt-write-code` 통과 |
+
+`vm_handle_wp` 는 두 번째 줄 안에서 **"진짜 위반"** 과 **"CoW 분리 시점"**
+을 가르려 할 때 쓰는 자리. CoW 가 없으면 두 번째 줄 전체가 곧장 `kill`
+로 가도 멀쩡히 통과하므로 훅이 비어 있어도 되는 것.
+
+만약 CoW 를 만들면 흐름은 이렇게 바뀐다:
+
+```
+fork()
+  └─ supplemental_page_table_copy 에서
+       프레임을 복사하지 않고 공유 + 양쪽 PTE 를 read-only 로 표시
+
+write fault (not_present == false, write == true)
+  └─ vm_try_handle_fault 가 "SPT 의 page->writable 은 true 인데
+       PTE 가 RO 인 케이스" 를 식별
+  └─ vm_handle_wp(page) 로 분기
+  └─ vm_handle_wp 가
+       (1) 새 프레임 alloc + memcpy
+       (2) PTE 를 writable=true 로 재설정
+       (3) 공유 카운터 감소
+```
+
+→ 우리는 이 분기 *전체* 를 안 만들고 있다. 그래서 `vm_handle_wp` 는 영원히
+호출되지 않고, 비어 있는 채로도 모든 정규 테스트가 통과한다.
+
+### 11.2 질문 2 — "페이지가 SPT 에 있고 read 도 멀쩡한데 user 에서 fault?"
+
+같은 사람이 그 다음에 던진 가설. 정리하면 *"SPT 에 있는데 정당한 접근에서
+fault 가 나는 상황이 가능하냐"*.
+
+**결론** — **매번 일어나고 있다.** 그게 *비정상*이 아니라 lazy 시스템의
+**정상** 동작. 단지 그렇게 안 보이는 이유는 SPT 와 PTE 를 같은 것으로
+오해하기 때문.
+
+#### 핵심 분리 — SPT ≠ PTE
+
+| 자료구조 | 누가 보는가 | 무엇을 안다 |
+|---|---|---|
+| **SPT** (`thread->spt`) | OS (우리) 만 본다 | "이 va 는 어떤 종류의 페이지이며, *어떻게 로드해야* 하나" |
+| **PTE** (`pml4`) | MMU (CPU) 가 본다 | "이 va 가 *지금* 어느 물리 프레임에 매핑돼 있나" |
+
+MMU 는 SPT 의 존재를 모른다. user 코드가 `mov rax, [0x401000]` 을 했을 때
+**MMU 는 PTE 만 확인** 하고, PTE 에 매핑이 없으면 SPT 에 그 va 가 등록돼
+있든 말든 **무조건 page fault** 를 일으킨다.
+
+→ "SPT 에 있는데 fault" 는 *비정상*이 아니라 **"SPT 에 있고, PTE 에는
+아직 없다"** 의 정상 표현일 뿐.
+
+#### 우리 시스템에서 이 조합이 반드시 발생하는 세 시점
+
+```
+시점 A — lazy load 직전
+  SPT: [VM_UNINIT] ←  있음
+  PTE: (없음)
+  → 첫 touch 시 fault. vm_try_handle_fault → spt_find_page → vm_do_claim_page
+
+시점 B — fork 직후 자식의 모든 페이지
+  SPT: [VM_UNINIT / VM_ANON] ←  부모에서 복제, 있음
+  PTE: (텅 빔)                ←  자식 페이지 테이블에는 아무것도 매핑 안 됨
+  → 자식이 첫 access 하는 모든 페이지에서 fault. A 와 같은 경로.
+
+시점 C — (앞으로 swap 도입 후) swap-out 당한 페이지
+  SPT: [VM_ANON, swap_slot = 42] ←  있음
+  PTE: (지워짐)
+  → 재접근 시 fault. swap_in 으로 복원.
+```
+
+세 경우 모두 **"페이지가 SPT 에 있고 read 가 멀쩡한데 fault"** 의 정확한
+인스턴스. 우리는 이것을 잘 처리하고 있다 — `vm_try_handle_fault` 의 첫
+분기 (`spt_find_page` 성공 → `vm_do_claim_page`) 가 그 처리 자체.
+
+#### 그럼 진짜 "이상한 fault" 는 무엇인가
+
+질문자의 직관을 살리려면 *"이런 조합이면 진짜 버그다"* 의 경계도 같이
+짚는 게 좋다.
+
+- PTE 에 매핑이 있고 (`not_present == false`)
+- 권한도 맞고 (read 시도, PTE 가 read 허용)
+- 그런데 fault
+
+이 조합은 Pintos x86-64 에서 도달 가능한 경로가 사실상 없다. MMU 가
+fault 를 일으킬 이유가 없기 때문. 즉 **질문의 가설은 페이지 테이블
+레벨에서 성립하지 않는다** — 이 한마디로 토론이 정리된다.
+
+가능한 *겉보기* 위반은 두 가지뿐:
+
+1. **권한 불일치 버그** — SPT 의 `page->writable == true` 인데
+   `pml4_set_page(... false)` 로 박혀서 write 시 fault. **우리 측 버그.**
+2. **TLB stale** — 페이지 테이블 갱신 후 invalidate 누락. Pintos 의
+   `pml4_set_page` 가 자체 invalidate 해줘서 거의 마주칠 일 없음.
+
+### 11.3 `vm_try_handle_fault` 의 두 분기를 이 관점으로 다시 읽기
+
+위의 두 질문이 같은 그림으로 합쳐진다 — 두 분기가 정확히 *"SPT 와 PTE
+가 어긋난 종류"* 로 나뉜다.
+
+```c
+if (not_present) {
+    // PTE 가 없다 — SPT 가 있으면 채우면 되고, 없으면 정말 없는 페이지.
+    page = spt_find_page(spt, addr);
+    if (page) return vm_do_claim_page(page);   // ← "SPT 있다 + PTE 없다" 의 정상 처리
+    if (스택 휴리스틱) { vm_stack_growth(...); return true; }
+    return false;                              // ← kill
+} else {
+    // PTE 는 있는데 권한 위반.
+    //   write 위반 — RO 페이지에 쓰기.
+    //     • CoW 안 함 → 진짜 위반 → kill (현재 동작)
+    //     • CoW 했으면 → vm_handle_wp 로 분리
+    //   read 위반 — 사실상 도달 불가.
+    return false;                              // → kill
+}
+```
+
+- 윗줄이 **§11.2 의 답** — "SPT 있고 read 멀쩡한데 fault" 는 매 lazy load
+  / fork / swap-in 마다 일어나며, 우리가 채우는 정상 경로.
+- 아랫줄 분기 안의 *"CoW 했으면 → vm_handle_wp"* 가 **§11.1 의 답** —
+  CoW 가 없어서 그 자리가 텅 비어 있는 것.
+
+### 11.4 코어타임에서 받아칠 한 줄 요약
+
+> "SPT 에 페이지가 있는데 user 에서 fault 가 나는 건 *우리 시스템이 매
+> 순간 하고 있는 일* — lazy load 의 정의 자체가 그거고, fork 직후 자식의
+> 모든 페이지가 그 상태야. 'SPT 에 있다 ≠ PTE 에 있다' 라는 분리만 잡으면
+> 의문이 풀려. 그리고 그 빈 `vm_handle_wp` 도 같은 그림의 아래쪽 분기 —
+> CoW 를 만들었을 때 채우는 보너스 훅이라, 만들 계획이 없으면 영원히 호출
+> 안 되니까 비어 있는 게 정상이야."
