@@ -21,11 +21,16 @@ vm_file_init (void) {
 
 /* Initialize the file backed page */
 bool
-file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
+file_backed_initializer (struct page *page, enum vm_type type UNUSED, void *kva UNUSED) {
 	/* Set up the handler */
+	/* file-backed page가 사용할 함수 묶음을 연결 */
 	page->operations = &file_ops;
 
-	struct file_page *file_page = &page->file;
+	/* file-backed page 전용 데이터 영역을 가리킴. 현재는 추가 초기화가 없다. */
+	struct file_page *file_page UNUSED = &page->file;
+
+	/* file-backed page 초기화가 성공했음을 알림 */
+	return true;
 }
 
 /* Swap in the page by read contents from the file. */
