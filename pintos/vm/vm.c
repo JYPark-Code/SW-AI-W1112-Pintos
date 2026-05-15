@@ -3,6 +3,8 @@
 #include "threads/malloc.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
+#include "threads/mmu.h"
+#include "threads/vaddr.h"
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -56,11 +58,33 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 	/* Check wheter the upage is already occupied or not. */
 	if (spt_find_page(spt, upage) == NULL)
 	{
-		/* TODO: Create the page, fetch the initialier according to the VM type,
-		 * TODO: and then create "uninit" page struct by calling uninit_new. You
-		 * TODO: should modify the field after calling the uninit_new. */
+		// 1. 페이지 생성 후, VM 타입에 맞는 initializer 가져오기
+		struct page *page = malloc(sizeof *page);
+		if (page == NULL)
+			goto err;
 
-		/* TODO: Insert the page into the spt. */
+		bool (*initializer)(struct page *page, enum vm_type type, void *kva);
+		switch (VM_TYPE(type))
+		{
+		case VM_ANON:
+			initializer = anon_initializer;
+			break;
+		case VM_FILE:
+			initializer = file_backed_initializer;
+			break;
+		default:
+			goto err;
+		}
+		// 2. uninit_new 호출해서 "uninit" 페이지 구조체 생성
+		uninit_new(page, upage, init, type, aux, initializer);
+
+		// 3. page 쓰기 권한 지정
+		page->writable = writable;
+
+		// 4. 페이지를 spt에 삽입.
+		// 삽입 결과를 return
+		bool insert_result = spt_insert_page(spt, page);
+		return insert_result;
 	}
 err:
 	return false;
@@ -124,18 +148,31 @@ vm_evict_frame(void)
 	return NULL;
 }
 
-/* palloc() and get frame. If there is no available page, evict the page
- * and return it. This always return valid address. That is, if the user pool
- * memory is full, this function evicts the frame to get the available memory
- * space.*/
+/* palloc()으로 frame을 가져온다.
+ * 사용 가능한 페이지가 없다면, 어떤 페이지를 eviction(축출)한 뒤 반환한다.
+ *
+ * 이 함수는 항상 유효한 주소를 반환해야 한다.
+ * 즉, user pool 메모리가 가득 찼다면,
+ * 사용 가능한 메모리 공간을 확보하기 위해 frame을 eviction 해야 한다.
+ */
 static struct frame *
 vm_get_frame(void)
 {
-	struct frame *frame = NULL;
 	/* TODO: Fill this function. */
-
-	ASSERT(frame != NULL);
-	ASSERT(frame->page == NULL);
+	// 1. frame 객체를 동적 할당
+	// 실제 물리 메모리 페이지를 할당 후, 커널 가상 주소를 kva에 저장
+	struct frame *frame = malloc(sizeof *frame);
+	frame->kva = palloc_get_page(PAL_USER);
+	if (frame->kva == NULL)
+	{
+		// eviction 로직(아직 미구현)
+		free(frame);
+		kill();
+	}
+	// 2. 빈 프레임을 할당하는 것이므로, page는 NULL로 초기화
+	// 실제 요청(vm_do_claim_page)에서 실제로 연결한다.
+	frame->page = NULL;
+	// 3. 할당한 frame return
 	return frame;
 }
 
@@ -149,18 +186,54 @@ vm_stack_growth(void *addr UNUSED)
 static bool
 vm_handle_wp(struct page *page UNUSED)
 {
+	// 1. read-only 페이지에 대해서 write 접근했을때 -> 이건 죽여야 됨
+	// 2. COW
 }
 
 /* Return true on success */
-bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
-						 bool user UNUSED, bool write UNUSED, bool not_present UNUSED)
+bool vm_try_handle_fault(struct intr_frame *f, void *addr,
+						 bool user, bool write, bool not_present)
 {
-	struct supplemental_page_table *spt UNUSED = &thread_current()->spt;
-	struct page *page = NULL;
-	/* TODO: Validate the fault */
-	/* TODO: Your code goes here */
+	// 주소가 NULL이거나, 커널 가상 주소라면 kill
+	if (addr == NULL || is_user_vaddr(addr) == false)
+	{
+		return false;
+	}
 
-	return vm_do_claim_page(page);
+	struct supplemental_page_table *spt = &thread_current()->spt;
+	struct page *page = NULL;
+
+	// CASE1: not_present == true (페이지가 없을 때 or present == 0)
+	if (not_present == true)
+	{
+		// SPT 검사
+		page = spt_find_page(spt, addr);
+		// 1) SPT에 존재 O -> Lazy loading / swap in
+		if (page != NULL)
+		{
+			return vm_do_claim_page(page);
+		}
+		// 2) SPT에 존재 X -> stack growth 가능하면 수행, 아니면 kill
+		else
+		{
+			// stack growth 조건 판단
+			// if 맞으면 -> stack_growth + spt_find_page + return vm_do_claim_page(page);
+			// 아니면 return false
+		}
+	}
+
+	// CASE2: not_present == false (페이지가 존재)
+	if (not_present == false)
+	{
+		// 1) write = true -> vm_handle_wp(page) 호출
+		if (write == true)
+			return vm_handle_wp(page);
+		// 2) write = false, user = true -> 유저 모드에서 읽기도 실패 -> 커널 주소 읽기 시도 -> kill
+		// 사실 2번 문제는 이미 위에서 걸러진다.
+		// 3) write = false/true, user = false -> 커널 모드에서 읽기/쓰기 실패 -> 커널 권한 문제 -> kill
+		else
+			return false;
+	}
 }
 
 /* Free the page.
@@ -172,25 +245,28 @@ void vm_dealloc_page(struct page *page)
 }
 
 /* Claim the page that allocate on VA. */
-bool vm_claim_page(void *va UNUSED)
+bool vm_claim_page(void *va)
 {
 	struct page *page = NULL;
 	/* TODO: Fill this function */
-
+	// SPT에서 va에 해당하는 page 찾기
+	page = spt_find_page(&thread_current()->spt, va);
 	return vm_do_claim_page(page);
 }
 
-/* Claim the PAGE and set up the mmu. */
+/* 페이지를 요청하고, 페이지 테이블에 등록한다. */
 static bool
 vm_do_claim_page(struct page *page)
 {
 	struct frame *frame = vm_get_frame();
 
 	/* Set links */
+	// frame 객체의 page는 NULL이었음
 	frame->page = page;
 	page->frame = frame;
 
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
+	pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable);
 
 	return swap_in(page, frame->kva);
 }

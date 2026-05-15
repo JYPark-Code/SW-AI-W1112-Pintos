@@ -846,7 +846,12 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
+		struct lazy_load_info *aux = malloc(sizeof *aux);
+		aux->file = file;
+		aux->ofs = ofs;
+		aux->page_read_bytes = page_read_bytes;
+		aux->page_zero_bytes = page_zero_bytes;
+
 		if (!vm_alloc_page_with_initializer(VM_ANON, upage,
 											writable, lazy_load_segment, aux))
 			return false;
@@ -866,11 +871,17 @@ setup_stack(struct intr_frame *if_)
 	bool success = false;
 	void *stack_bottom = (void *)(((uint8_t *)USER_STACK) - PGSIZE);
 
-	/* TODO: Map the stack on stack_bottom and claim the page immediately.
-	 * TODO: If success, set the rsp accordingly.
-	 * TODO: You should mark the page is stack. */
+	/* TODO: stack_bottom 주소에 스택 페이지를 할당하고, 즉시 물리 프레임까지 확보하라.
+	 * TODO: 성공하면 rsp(스택 포인터)를 그에 맞게 설정하라.
+	 * TODO: 해당 페이지가 스택 페이지임을 표시하라. */
 	/* TODO: Your code goes here */
-
+	success = vm_alloc_page(VM_ANON | VM_MARKER_STACK, stack_bottom, true);
+	if (success)
+	{
+		success = vm_claim_page(stack_bottom);
+		if (success)
+			if_->rsp = USER_STACK;
+	}
 	return success;
 }
 #endif /* VM */
