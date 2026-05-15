@@ -260,6 +260,30 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 	/* TODO: Validate the fault */
 	/* TODO: Your code goes here */
 
+	/* fault 주소가 없거나 kernel 주소면 처리할 수 없다. */
+	if (addr == NULL || is_kernel_vaddr (addr)) {
+		return false;
+	}
+
+	/* present page에서 난 권한 위반 fault는 아직 처리하지 않는다. */
+	if (!not_present) {
+		return false;
+	}
+
+	/* fault가 난 주소에 해당하는 page를 SPT에서 찾는다. */
+	page = spt_find_page (spt, addr);
+
+	/* SPT에 등록된 page가 없으면 아직 처리할 수 없다. */
+	if (page == NULL) {
+		return false;
+	}
+
+	/* write fault인데 page가 writable이 아니면 처리할 수 없다. */
+	if (write && !page->writable) {
+		return false;
+	}
+
+	/* SPT에서 찾은 page를 실제 frame에 올린다. */
 	return vm_do_claim_page (page);
 }
 

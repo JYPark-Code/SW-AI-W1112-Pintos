@@ -22,6 +22,7 @@
 #ifdef VM
 #include "vm/vm.h"
 #endif
+#include "threads/malloc.h"
 
 static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
@@ -781,11 +782,54 @@ install_page (void *upage, void *kpage, bool writable) {
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
+/* lazy_load_segment()가 나중에 파일을 읽을 때 필요한 정보를 담는 구조체 */
+ struct lazy_load_arg
+{
+	/* 나중에 읽을 실행 파일 */
+	struct file *file;
+	/* 파일에서 읽기 시작할 위치 */
+	off_t ofs;
+	/* 파일에서 실제로 읽어야 하는 byte 수 */
+	size_t read_bytes;
+	/* 파일에서 읽은 뒤 0으로 채워야 하는 byte 수 */
+	size_t zero_bytes;
+};
+
 static bool
 lazy_load_segment (struct page *page, void *aux) {
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
+
+	/* vm_alloc_page_with_initializer()에서 넘긴 aux를 원래 구조체 타입으로 바꾸기 */
+	struct lazy_load_arg *args = aux;
+
+	/* 실제 파일 내용을 채울 frame의 커널 가상 주소를 가져온다 */
+	uint8_t *kva = page->frame->kva;
+
+	/* 파일의 지정된 위치에서 read_bytes만큼 읽어 frame에 채운다. */
+	if (file_read_at (args->file, kva, args->read_bytes, args->ofs) != (int) args->read_bytes)
+	{
+		/* 파일 읽기에 실패했으므로 다시 열어둔 파일을 닫는다. */
+		file_close (args->file);
+		
+		/* lazy loading 정보를 담고 있던 aux 구조체를 해제 */
+		free (args);
+
+		/* lazy loading 실패를 알림 */
+		return false;
+	}
+	/* 파일에서 읽은 뒤 남은 page 영역으로 0으로 채운다. */
+	memset (kva + args->read_bytes, 0, args->zero_bytes);
+
+	/* lazy loading이 끝났으므로 다시 열어둔 파일 닫기 */
+	file_close (args->file);
+	
+	/* lazy loading 정보를 담고 있던 aux 구조체 해제 */
+	free (args);
+
+	/* lazy loading 성공을 알림 */
+	return true;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -817,15 +861,51 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
-		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
-					writable, lazy_load_segment, aux))
+		/* lazy_load_segment()에 넘길 정보를 담을 aux 구조체를 동적으로 할당 */
+		struct lazy_load_arg *aux = malloc (sizeof *aux);
+
+		/* aux 할당에 실패하면 segment 등록을 진행할 수 없음 */
+		if (aux == NULL) {
 			return false;
+		}
+
+		/* load()가 원래 file을 닫아도 나중에 lazy loading 때 읽을 수 있도록 file 다시 열기 */
+		aux->file = file_reopen (file);
+
+		/* file 재오픈에 실패하면 aux를 해제하고 실패 */
+		if (aux->file == NULL)
+		{
+			free (aux);
+			return false;
+		}
+
+		/* 이 page가 파일에서 읽기 시작할 offset 저장 */
+		aux->ofs = ofs;
+		/* 이 page에서 파일로부터 실제로 읽을 bytes 수 저장 */
+		aux->read_bytes = page_read_bytes;
+		/* 이 page에서 파일을 읽은 뒤 0으로 채울 byte 수 저장 */
+		aux->zero_bytes = page_zero_bytes;
+
+		/* VM_UNINIT page를 SPT에 등록하고, fault 시 lazy_load_segment()가 실행되도록 설정 */
+		if (!vm_alloc_page_with_initializer (VM_ANON, upage, writable, lazy_load_segment, aux))
+		{
+			/* SPT 등록에 실패했으므로 다시 열어둔 파일 닫기 */
+			file_close (aux->file);
+			/* SPT 등록에 실패했으므로 aux 구조체 해제 */
+			free (aux);
+			/* segment 등록 실패를 알림 */
+			return false;
+		}
 
 		/* Advance. */
+		/* 아직 등록하지 않은 file-backed byte 수를 줄인다. */
 		read_bytes -= page_read_bytes;
+		/* 아직 등록하지 않은 zero-fill byte 수를 줄인다. */
 		zero_bytes -= page_zero_bytes;
+		/* 다음 user virtual page로 이동 */
 		upage += PGSIZE;
+		/* 다음 page가 파일에서 읽기 시작할 offset으로 이동 */
+		ofs += page_read_bytes;
 	}
 	return true;
 }
