@@ -123,8 +123,15 @@ process_create_initd (const char *file_name) {
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
 
+	/* thread name은 argv[0]만 사용한다. file_name 전체(공백 포함 cmdline)를
+	 * 넘기면 process_exit의 "<name>: exit(N)" 출력이 인자까지 같이 찍힌다. */
+	char thread_name[16];
+	strlcpy (thread_name, file_name, sizeof thread_name);
+	char *sp = strchr (thread_name, ' ');
+	if (sp != NULL) *sp = '\0';
+
 	/* Create a new thread to execute FILE_NAME. */
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
+	tid = thread_create (thread_name, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
 	return tid;
@@ -365,14 +372,12 @@ process_exec (void *f_name) {
 	     token = strtok_r (NULL, " ", &save_ptr))
 		argv[argc++] = token;
 
-	/* 스레드 이름 갱신 코드를 비활성화한 이유:
+	/* 스레드 이름 갱신은 일부러 하지 않는다:
 	 *   exec("child")는 "현재 프로세스의 이미지를 child로 교체"하는 것이지,
-	 *   "현재 스레드 이름을 child로 바꾸는" 게 아니다. 부모 프로세스가 exec로
-	 *   자식 이미지를 로드해도 process_exit의 종료 메시지에는 원래 프로세스
-	 *   이름이 찍혀야 한다. 이 strlcpy를 살리면 exec-once 같은 테스트에서
-	 *   종료 메시지의 프로세스 이름이 바뀌어 fail. */
-	strlcpy (thread_current ()->name, argv[0],
-	         sizeof thread_current ()->name);
+	 *   "현재 스레드 이름을 child로 바꾸는" 게 아니다. process_exit의 종료
+	 *   메시지에는 원래 프로세스 이름이 찍혀야 exec-once 등의 테스트가 통과한다.
+	 *   initd 경로에서도 process_create_initd가 미리 argv[0]만으로 name을
+	 *   세팅하므로 여기서 별도 갱신이 필요 없다. */
 
 	/* load()가 새 페이지 테이블과 새 SPT를 만들기 시작하므로
 	그 전에 기존 SPT를 정리해야 메모리 누수 없이 깔끔하게 교체됨 */

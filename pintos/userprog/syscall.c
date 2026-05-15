@@ -13,6 +13,7 @@
 #include "filesys/file.h"
 #include "devices/input.h"      /* input_getc() — SYS_READ stdin 분기에서 사용 */
 #include "threads/palloc.h" 	/* SYS_EXEC 에서 palloc_get_page() 인자로 넣을 떄 PAL_ZERO 필요*/
+#include "threads/mmu.h"        /* pml4_get_page — 유저 포인터 매핑 검증에 사용 */
 #include "vm/vm.h"
 
 /* 파일 시스템 락 선언 */
@@ -49,17 +50,22 @@ syscall_init (void) {
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
 }
 
-/* 유저가 넘긴 포인터의 안전성을 3단계로 검증한다.
+/* 유저가 넘긴 포인터의 안전성을 검증한다.
  * 인자: uaddr — 유저 주소 공간을 가리켜야 하는 포인터
  * 반환: 정상이면 그냥 리턴, 비정상이면 exit(-1)로 즉시 종료 (반환 X)
  *
- * 검증을 3단계로 나누는 이유:
- *   1) NULL: 가장 흔한 잘못된 포인터. 다음 단계의 dereference 전에 차단.
+ * 공통 단계:
+ *   1) NULL: 가장 흔한 잘못된 포인터. dereference 전에 차단.
  *   2) !is_user_vaddr: 유저가 KERN_BASE 이상의 커널 주소를 넘긴 경우 차단.
- *      이 검사를 빼먹으면 유저가 syscall로 커널 메모리를 읽거나 쓸 수 있다.
- *   3) pml4_get_page == NULL: 유저 주소이지만 실제로는 매핑이 없는 페이지.
- *      is_user_vaddr는 "주소 범위"만 보지 "실제 매핑 여부"는 보지 않으므로
- *      이 단계가 없으면 dereference 시 page fault가 커널에서 터진다.
+ *      빼먹으면 syscall로 커널 메모리를 읽거나 쓸 수 있다.
+ *
+ * 매핑 검사 단계는 빌드 모드에 따라 다르다:
+ *   - userprog (no VM): pml4_get_page == NULL이면 차단. 매핑이 없으면
+ *     dereference 시 커널 page fault → kill() 패닉이 나기 때문.
+ *   - VM build: pml4에 없어도 SPT에 lazy 엔트리가 있거나, 스택 성장
+ *     후보일 수 있다. 그래서 pml4 단독 검사로는 정상 포인터를 잘못 차단한다
+ *     (예: pt-grow-stk-sc가 64KB 스택 버퍼를 syscall로 넘기는 케이스).
+ *     SPT 보유 또는 스택 성장 영역(rsp-8 이상, 1MB 한도) 안이면 통과시킨다.
  *
  * 함정: thread_exit()는 NO_RETURN이므로 호출자에서 추가 처리 불필요. */
 static void
@@ -68,6 +74,26 @@ validate_user_addr (const void *uaddr) {
         thread_current()->exit_status = -1;
         thread_exit();
     }
+#ifndef VM
+    if (pml4_get_page(thread_current()->pml4, uaddr) == NULL) {
+        thread_current()->exit_status = -1;
+        thread_exit();
+    }
+#else
+    if (pml4_get_page(thread_current()->pml4, uaddr) != NULL)
+        return;
+    if (spt_find_page(&thread_current()->spt, (void *) uaddr) != NULL)
+        return;
+    /* 스택 성장 후보: USER_STACK - 1MB ≤ addr < USER_STACK, 그리고
+     * 유저 rsp - 8 이상 (PUSH 명령어 8바이트 아래 영역까지 정상). */
+    uintptr_t rsp = thread_current()->user_rsp;
+    if ((uintptr_t) uaddr >= rsp - 8
+        && (uintptr_t) uaddr < (uintptr_t) USER_STACK
+        && (uintptr_t) uaddr >= (uintptr_t) USER_STACK - (1 << 20))
+        return;
+    thread_current()->exit_status = -1;
+    thread_exit();
+#endif
 }
 
 /* x86-64 syscall ABI (KAIST 기준)
@@ -227,9 +253,9 @@ syscall_handler (struct intr_frame *f UNUSED) {
 					lock_release(&filesys_lock);
 					break;
 				}
-				// writable 체크
+#ifdef VM
+				// writable 체크 (VM 빌드에서만 의미가 있음 — 지연 로딩/RO 페이지 판별)
 				struct page *p = spt_find_page(&thread_current()->spt, pg_round_down((void *)buffer));
-				// printf("buffer: %p, page: %p, writable: %d\n", buffer, p, p ? p->writable : -1);
 				if (p == NULL) {
 					// 유저 스택 범위인지 확인
 					uintptr_t cur_rsp = thread_current()->user_rsp;
@@ -244,6 +270,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 					thread_current()->exit_status = -1;
 					thread_exit();
 					}
+#endif
 				f->R.rax = file_read(file, buffer, size);
 				lock_release(&filesys_lock);
 			}
