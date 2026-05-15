@@ -48,7 +48,7 @@ flowchart LR
     B -->|실패| F[".result = compile fail<br/>(채점 무관, 결과만 'fail')"]
     C --> D[채점]
     D --> E[.result = PASS/FAIL]
-    style F fill:#ffe0e0,stroke:#b00
+    style F fill:#ffe0e0,stroke:#b00,color:#000
 ```
 
 여기서 첫 교훈 한 줄 — **한 줄로 "FAIL" 만 나와도 그게 실행 결과인지
@@ -90,8 +90,8 @@ flowchart LR
         B1[threads/init.c] --> B2[process.h]
         B2 --> B3["off_t 모름 → 컴파일 실패"]
     end
-    style A3 fill:#d4f4dd
-    style B3 fill:#ffe0e0
+    style A3 fill:#d4f4dd,color:#000
+    style B3 fill:#ffe0e0,color:#000
 ```
 
 수정은 **헤더가 자기 자신을 다 갖추는 원칙** — `process.h` 자신이 `off_t.h`
@@ -230,8 +230,8 @@ flowchart TB
     C --> D[initd 진입]
     D --> E[process_exec]
     E --> F["strlcpy: name ← argv[0]<br/>thread.name = 'args-multiple'<br/>(정리됨)"]
-    style C fill:#ffe0a0
-    style F fill:#d4f4dd
+    style C fill:#ffe0a0,color:#000
+    style F fill:#d4f4dd,color:#000
 ```
 
 그 의존이 강하다 — strlcpy 한 줄을 빼면 initd 출력이 망가지고,
@@ -325,8 +325,8 @@ flowchart LR
     D --> E[커널 모드 page fault]
     E --> F["kill: PANIC<br/>'Kernel bug'"]
     B -->|"pml4 검사 O<br/>(이후)"| G["exit(-1)<br/>깔끔 종료"]
-    style F fill:#ffe0e0
-    style G fill:#d4f4dd
+    style F fill:#ffe0e0,color:#000
+    style G fill:#d4f4dd,color:#000
 ```
 
 ---
@@ -353,7 +353,7 @@ flowchart LR
     A["user: read(fd, buf2+32768, ...)"] --> B[validate_user_addr]
     B --> C{"pml4_get_page<br/>== NULL?"}
     C -->|"VM 정상 케이스도<br/>여기서 NULL"| D["exit(-1) ← 잘못된 차단"]
-    style D fill:#ffe0e0
+    style D fill:#ffe0e0,color:#000
 ```
 
 즉 **userprog 에서는 매핑 없으면 잘라야 한다** (커널 fault 패닉 방지)
@@ -412,11 +412,11 @@ flowchart TD
     D -->|아니오| E{"rsp-8 ≤ addr < USER_STACK<br/>그리고 1MB 한도 안?"}
     E -->|예| OK3[통과 - 스택 성장 후보]
     E -->|아니오| X2[exit -1 - 진짜 쓰레기]
-    style OK1 fill:#d4f4dd
-    style OK2 fill:#d4f4dd
-    style OK3 fill:#d4f4dd
-    style X1 fill:#ffe0e0
-    style X2 fill:#ffe0e0
+    style OK1 fill:#d4f4dd,color:#000
+    style OK2 fill:#d4f4dd,color:#000
+    style OK3 fill:#d4f4dd,color:#000
+    style X1 fill:#ffe0e0,color:#000
+    style X2 fill:#ffe0e0,color:#000
 ```
 
 세 가지 모두 부정인 경우에만 진짜로 잘라낸다. 그러면 `pt-grow-stk-sc` 의
@@ -483,8 +483,8 @@ flowchart LR
         H -->|예| I[커밋]
         I --> E
     end
-    style D fill:#ffe0e0
-    style I fill:#d4f4dd
+    style D fill:#ffe0e0,color:#000
+    style I fill:#d4f4dd,color:#000
 ```
 
 체크리스트로 굳히자면 — **수정 후 두 디렉터리에서 적어도 `make` 한 번씩,
