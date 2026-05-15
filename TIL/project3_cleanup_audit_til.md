@@ -15,6 +15,7 @@
 >
 > | 섹션 | 주제 | 무게중심 |
 > |---|---|---|
+> | §0 | 커밋 reference + 확장된 "왜" | 작업 전체를 한 번에 다시 잡고 싶을 때 |
 > | §1 | 왜 swap 직전에 audit 인가 | "두 변수가 동시에 깨질 위험" 차단 |
 > | §2 | `multi-recurse` 가 이미 통과 → `multi-oom` 으로 pivot | 두 테스트가 검증하는 게 어떻게 다른가 |
 > | §3 | Bug 1 — `SYS_OPEN` fd 할당 OOB | 가장 가시적인 크래시 |
@@ -23,6 +24,118 @@
 > | §6 | Bug 5 — `fork_success` 가 wire 안 됨 ("`child_236_X: exit(0)`" 추적) | 가장 미묘한 한 줄 |
 > | §7 | 결과와 남은 항목 | rox · syn-remove · VM wait-killed |
 > | §8 | 메타 교훈 | "swap 전에 회수 경로 1개 만들기" |
+
+---
+
+## 0. 한눈에 보기 — 커밋 reference 와 확장된 "왜"
+
+> 이 audit 가 *왜* 필요했고 *무엇을* 고쳤는지를 한 화면에 정리한 reference.
+> §1–§8 은 발견 순서대로 따라가는 회고이고, 본 §0 은 "코드 변경만 한 번에
+> 훑고 싶을 때" 의 카드.
+
+### 0.1 두 개의 커밋
+
+| 커밋 | 종류 | 내용 |
+|---|---|---|
+| `ef3fd9d` | fix | 5가지 누수/wire 누락을 한 번에 정리. `process.c` +43/-4, `syscall.c` +41/-7 |
+| `a99d286` | docs | 본 TIL 추가 (465 줄) |
+
+코드 변경은 `ef3fd9d` 한 커밋에 다 들어 있다. 건드린 파일은 둘 —
+`pintos/userprog/process.c`, `pintos/userprog/syscall.c` — 뿐이고, **새 함수/
+구조체/필드를 추가하지 않는다.** 본질적으로 이 audit 가 한 일은 *기존 코드의
+"회수 짝이 빠진 자리" 를 채운 것* 이다.
+
+### 0.2 왜 swap 직전이어야 했는가 — 확장
+
+§1 이 "두 변수가 동시에 깨질 위험" 으로 한 줄 요약했지만, swap 의 동작 원리상
+누수와 동시에 활성화되면 디버깅이 거의 불가능에 가까워진다 — 이걸 더
+구체적으로 본다.
+
+**swap 이 활성화되는 조건:** `palloc_get_page()` 가 "줄 페이지 없음" 으로 NULL
+을 반환할 때, swap 의 evict 로직이 호출돼 *안 쓰는 사용자 페이지를 디스크로
+보내고* 그 자리를 새 요청자에게 준다. 즉 **swap 코드는 OOM 직전 경로에서만
+실행된다.** 평상시 디버깅으로는 그 경로가 안 돌아가서 안 보인다.
+
+```mermaid
+flowchart TB
+    A["palloc_get_page() 실패"]
+    A --> B{누가 부족하게 만들었나?}
+    B -->|swap 로직 버그| C["evict 가 페이지를<br/>제대로 못 내보냄"]
+    B -->|cleanup leak| D["죽은 프로세스의<br/>페이지를 안 풀었음"]
+    B -->|둘 다| E["??? 추적 불가능"]
+    style E fill:#ffe0e0,color:#000
+    style C fill:#fff3cd,color:#000
+    style D fill:#fff3cd,color:#000
+```
+
+누수 + swap 이 동시에 활성화되면 세 가지가 동시에 깨진다:
+
+1. **증상이 같다** — 두 원인 모두 결국 `PANIC: out of pages` 로 끝난다.
+   콜스택만 봐서는 leak 인지 evict 버그인지 구분 불가.
+2. **재현이 비결정** — swap 은 OOM 직전에만 실행되므로, 누수가 있으면 풀이
+   *너무 빨리* 마르고 swap 이 트리거되는 시점/조건이 매번 달라진다.
+   "같은 입력 → 같은 panic 위치" 가 안 됨.
+3. **기준선 부재** — 누수 페이지 수가 회차마다 다르면 "swap 이 N 장을 회복해야
+   한다" 의 N 자체가 비결정. 정상/비정상 판단의 anchor 가 없음.
+
+오늘 5개 누수가 0 으로 정리된 결과 — **앞으로 OOM 이 뜨면 그건 swap 코드
+문제다** 라는 단정이 가능해졌다. 디버깅이 *두 변수 가운데 하나가 사라져* 한
+변수가 된 것.
+
+### 0.3 무엇을 고쳤는가 — 파일/함수 reference
+
+| # | 파일 | 함수/위치 | 한 줄 |
+|---|---|---|---|
+| 1 | `userprog/syscall.c` | `SYS_OPEN` 핸들러 | `fd_next++` 단조 증가 → `[2,128)` 최저 빈 슬롯 scan. 슬롯 없으면 방금 연 `file_close` 후 `-1` |
+| 2 | `userprog/process.c` | `process_cleanup` | `fd_table[2..128)` 의 모든 열린 file 을 `file_close` (모든 종료 경로의 단일 회수 지점) |
+| 3 | `userprog/process.c` | `load()` 성공 분기 (`done:`) | 이전 `running_file` 을 `file_close` (NULL-safe — initd 첫 진입 안전) |
+| 4 | `userprog/process.c` | `load()` 성공 분기 (`done:`) | `old_pml4` 를 `pml4_destroy` (NULL-safe — initd 첫 진입 안전) |
+| 5 | `userprog/process.c` `__do_fork` 의 성공/error 라벨 + `userprog/syscall.c` `SYS_FORK` | — | `fork_success` 양방향 set/read 추가, `TID_ERROR` 분기, error 라벨에서 `exit_status=-1` 방어선 |
+
+각 변경의 *상세 맥락* (왜 그 한 줄로 풀리는가, race-safe 보장은 어떻게
+되는가) 은 §3–§6 본문에 있다. §0 의 표는 "어디를 봐야 하는지" 만.
+
+#### 다섯 케이스의 공통 패턴
+
+모두 본질적으로 같은 구조의 누락이다 — **"자원을 만드는 곳" 은 있는데
+"회수의 짝" 이 없거나 wire 가 안 됨.**
+
+| 자원 | 만드는 곳 | (이전) 회수 위치 | (오늘 추가) 회수 위치 |
+|---|---|---|---|
+| fd 슬롯 | `SYS_OPEN` | 없음 (단조 증가) | `[2,128)` 최저 빈 슬롯 재사용 |
+| 열린 `struct file` 들 | `SYS_OPEN` | `SYS_CLOSE` 만 (유저가 호출해야) | `process_cleanup` 의 일괄 close |
+| 이전 `running_file` | `load()` 성공 시 새것 set | 없음 | `load()` 성공 분기에서 이전 것 close |
+| 이전 `old_pml4` | `load()` 진입 시 백업 | 실패 분기에만 | 성공 분기에도 `pml4_destroy` |
+| `fork_success` 신호 | 필드 선언/초기화만 | 어디서도 set/read 안 함 | `__do_fork` 양방향 set, `SYS_FORK` 에서 read |
+
+§8.2 의 "한 곳에서 회수" 패턴이 다섯 케이스에 그대로 매핑된다.
+
+### 0.4 결과 scorecard
+
+| 항목 | Before | After |
+|---|---|---|
+| `multi-oom` | FAIL | **PASS** |
+| `multi-recurse` | PASS | PASS (이전 회귀 정리의 부산물) |
+| 다른 userprog 테스트 90 개 | PASS | PASS (회귀 0) |
+| 잔여 userprog FAIL | rox·3 / stage0/wait-blocks / syn-remove | 동일 (모두 pre-existing) |
+| VM `wait-killed` | pre-existing FAIL | pre-existing FAIL (오늘 작업과 독립) |
+| swap 진입의 디버깅 가능성 | "측정 불가" | **"OOM = swap 책임" 단정 가능** |
+
+코드 면 — `process.c` +43/-4, `syscall.c` +41/-7, 두 파일 약 84 줄 추가. 작은
+변경이지만 *swap 작업 전체의 디버깅 가능성을 확보* 한 audit.
+
+### 0.5 미래의 본인을 위한 한 줄
+
+> "**swap 짜기 전, 5개 자원의 회수 짝을 맞췄다.** `process_cleanup` 이 모든
+> 종료 경로의 단일 회수 지점이 되도록 fd close 루프를 넣었고, `load()` 성공
+> 분기에 이전 `running_file` 과 `old_pml4` 의 회수를 추가했고, `fork_success`
+> 를 wire 해서 `__do_fork` 실패가 부모에게 -1 로 전달되도록 했다.
+> `multi-oom` 이 이 작업의 검증 도구였다 — fork·exec·exit 의 모든 비정상
+> 경로에서 자원이 회수되는지 10 회 반복으로 압박. 결과 multi-oom PASS,
+> 회귀 0, OOM 이 더 이상 swap 코드 문제와 섞이지 않게 됨."
+
+이 한 단락이 §0 의 진짜 요약. swap 작업 들어가다가 "내가 그때 뭘 해뒀더라"
+싶을 때 여기로.
 
 ---
 
