@@ -140,7 +140,10 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		 * 주의:
 		 *   - filesys_open() 반환값이 NULL이면 "파일 없음/열기 실패"이므로
 		 *     fd 발급 없이 -1 반환. open-missing 테스트가 이 경로를 검증.
-		 *   - fd_next는 2부터 시작 — 0(stdin), 1(stdout)은 콘솔 전용으로 예약.
+		 *   - fd 는 [2, 128) 범위의 가장 작은 비어 있는 슬롯을 사용한다.
+		 *     단조 증가(fd_next++) 방식은 close 후 슬롯 재사용을 못 해서
+		 *     126번째 open 부근에 fd_table[128] OOB write 가 발생 → 커널 fault.
+		 *     multi-oom 이 fd 126개 open 사이클을 반복해서 그 경로를 검증.
 		 *   - file == NULL 체크는 반드시 lock 안에서 해야 한다.
 		 *     lock 밖에서 NULL 체크 후 진입 직전 다른 스레드의 close가 끼면
 		 *     filesys 상태가 한 번 더 흔들릴 수 있어 race 위험. */
@@ -158,12 +161,27 @@ syscall_handler (struct intr_frame *f UNUSED) {
 				f->R.rax = -1;
 				lock_release(&filesys_lock);
 				break;
-			} else {
-				/* fd 발급 후 fd_next를 1 증가 (단조 증가) */
-				thread_current()->fd_table[thread_current()->fd_next] = file;
-				f->R.rax = thread_current()->fd_next;
-				thread_current()->fd_next++;
 			}
+
+			/* 가장 작은 비어 있는 fd 슬롯 검색 ([2, 128)) */
+			struct thread *t = thread_current();
+			int fd = -1;
+			for (int i = 2; i < 128; i++) {
+				if (t->fd_table[i] == NULL) {
+					fd = i;
+					break;
+				}
+			}
+			if (fd == -1) {
+				/* 전부 사용 중 — 열린 file 을 다시 닫고 -1 반환.
+				 * 이 처리를 빼면 file struct leak. */
+				file_close(file);
+				f->R.rax = -1;
+				lock_release(&filesys_lock);
+				break;
+			}
+			t->fd_table[fd] = file;
+			f->R.rax = fd;
 
 			lock_release(&filesys_lock);
 
@@ -406,9 +424,25 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		 *     자식이 __do_fork 끝에서 sema_up(fork_sema)로 깨운다. */
 		case SYS_FORK: {
 			const char *name = (const void *) f->R.rdi;  /* 자식 이름 */
+
+			/* 이전 fork 의 값이 남아 있을 수 있으니 명시적으로 reset.
+			 * 자식이 __do_fork 안에서 성공/실패에 맞춰 다시 세팅한다. */
+			thread_current()->fork_success = false;
+
 			tid_t tid = process_fork(name, f);          /* f가 곧 if_ */
+			if (tid == TID_ERROR) {
+				/* thread_create 자체가 실패 — sema_up 한 적이 없으므로
+				 * sema_down 으로 들어가면 영원히 블록. 그냥 -1 반환. */
+				f->R.rax = -1;
+				break;
+			}
 			sema_down(&thread_current()->fork_sema);   /* 자식 복제 완료 대기 */
-			f->R.rax = tid;
+
+			/* __do_fork 내부 (pml4_create 실패 / 페이지 복제 실패 / fd 복제 실패 등)
+			 * 에서 깨졌으면 fork_success = false. 이 검사가 없으면 부모는 valid
+			 * 해 보이는 tid 를 받고 wait 에서 default exit_status=0 을 회수,
+			 * multi-oom 의 "crashed child should return -1" 가 fail. */
+			f->R.rax = thread_current()->fork_success ? tid : -1;
 
 			break;
 		}

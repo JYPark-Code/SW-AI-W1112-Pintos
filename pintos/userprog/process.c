@@ -315,8 +315,12 @@ __do_fork (void *aux) {
 	 * 부모와 같은 시점에서 이어서 발급하기 위함. */
 	current->fd_next = parent->fd_next;
 
-	/* 모든 복제(메모리 + fd_table + fd_next) 완료 후에 부모를 깨운다.
+	/* 부모에게 "fork 성공" 신호. sema_up 직전에 세팅해야 부모가
+	 * sema_down 에서 깨어났을 때 일관된 값을 본다. SYS_FORK 핸들러가
+	 * 이 값을 보고 fork() 반환을 -1 / child_tid 로 결정한다.
+	 * 모든 복제(메모리 + fd_table + fd_next) 완료 후에 부모를 깨운다.
 	 * 이 시점 이전에 sema_up하면 부모가 먼저 실행돼 race 발생. */
+	parent->fork_success = true;
 	sema_up(&parent->fork_sema);
 
 	/* 자식의 fork() 반환값은 0 — do_iret 시 rax 레지스터로 들어간다. */
@@ -328,7 +332,13 @@ __do_fork (void *aux) {
 	if (succ)
 		do_iret (&if_);
 error:
-	/* 실패 시에도 부모를 깨워야 영원히 블록되지 않는다. */
+	/* 실패 — fork_success 는 false 로 두어 부모가 -1 반환을 결정하게 한다.
+	 * exit_status 도 -1 로 세팅: 만약 부모가 fork_success 검사 없이
+	 * wait 까지 갔다면 default 0 대신 -1 을 받게 해 multi-oom 의 "crashed
+	 * child should return -1" 시나리오를 안전하게 만족시킨다.
+	 * 실패 시에도 부모를 깨워야 영원히 블록되지 않는다. */
+	parent->fork_success = false;
+	thread_current ()->exit_status = -1;
 	sema_up(&parent->fork_sema);
 	thread_exit ();
 	if_.R.rax = 0;
@@ -534,6 +544,17 @@ process_cleanup (void) {
 #ifdef VM
 	supplemental_page_table_kill (&curr->spt);
 #endif
+	 /* 열린 fd 전부 닫는다. process_exit 으로 진입한 모든 경로 — 정상 종료,
+	  * exec 실패 후 thread_exit, fork 중간 실패, kill(-1) 등 — 가 여기로
+	  * 모이므로 fd 누수의 단일 회수 지점이다. multi-oom 의 depth-decrease
+	  * 회귀가 거의 이 누수에서 옴. */
+	 for (int fd = 2; fd < 128; fd++) {
+        if (curr->fd_table[fd] != NULL) {
+            file_close(curr->fd_table[fd]);
+            curr->fd_table[fd] = NULL;
+        }
+    }
+
 	 /* SPT 가 먼저 죽은 뒤 닫는다 — lazy load aux 가 이 file 을 참조하므로
 	  * SPT 파괴 전에 닫으면 destroy 콜백 안에서 UAF. file_close 가
 	  * deny_write 도 풀어 주므로 executable 보호도 여기서 끝난다. */
@@ -764,8 +785,26 @@ done:
     } else {
 		/* 성공 분기: lazy load 가 끝날 때까지 file 을 살려둬야 한다.
 		 * 여기서 file_close 를 하면 lazy_load_segment 의 file_seek/read 가
-		 * UAF — 실제로 모든 page-* 테스트가 죽었던 버그가 이 한 줄로 해결. */
-		t-> running_file = file;
+		 * UAF — 실제로 모든 page-* 테스트가 죽었던 버그가 이 한 줄로 해결.
+		 *
+		 * SYS_EXEC 으로 진입한 경우, 이 시점에 t->running_file 은 이전
+		 * ELF 핸들을 들고 있다. 덮어쓰기 전에 닫지 않으면 fork+exec 반복
+		 * 시점마다 struct file + inode 참조 한 개씩 누수.
+		 * (initd 첫 진입에서는 NULL — file_close(NULL) 안전.) */
+		if (t->running_file != NULL)
+			file_close (t->running_file);
+		t->running_file = file;
+
+		/* old_pml4 폐기. SYS_EXEC 으로 진입한 경우 이전 유저 주소공간이
+		 * 통째로 매달려 있다 — 안 풀면 exec 한 번마다 pml4 + 모든
+		 * 사용자 페이지 leak. initd 첫 진입에서는 NULL (pml4_destroy 안전).
+		 *
+		 * VM 빌드 주의: process_exec 가 load 진입 전에
+		 * supplemental_page_table_kill 로 SPT 를 비웠지만, page_destructor 가
+		 * frame 의 kva 까지 free 하지는 않으므로 pml4 가 가리키는 user 페이지가
+		 * 살아 있다. 여기서 pml4_destroy 가 그것들을 같이 회수한다. */
+		if (old_pml4 != NULL && old_pml4 != t->pml4)
+			pml4_destroy (old_pml4);
 	}
     return success;
 }
