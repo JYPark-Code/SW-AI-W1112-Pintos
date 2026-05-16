@@ -69,6 +69,9 @@ static unsigned page_hash (const struct hash_elem *e, void *aux);
 /* SPT hash table에서 page->va를 기준으로 page들을 비교한다. */
 static bool page_less (const struct hash_elem *a, const struct hash_elem *b, void *aux);
 
+/* hash_destroy()가 SPT 안의 page 하나를 정리할 때 호출할 helper 함수 */
+static void spt_destroy_page (struct hash_elem *e, void *aux);
+
 /* Create the pending page object with initializer. If you want to create a page, do not create it directly and make it through this function or `vm_alloc_page`. */
 bool
 vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
@@ -242,10 +245,13 @@ vm_get_frame (void) {
 }
 
 /* Growing the stack. */
+/* fault 주소를 기준으로 새 stack page를 만들고 실제 frame에 올린다. */
 static void
 vm_stack_growth (void *addr UNUSED) {
+	/* SPT는 page 단위로 관리하므로 fault 주소를 page 시작 주소로 내린다. */
 	void *stack_bottom = pg_round_down (addr);
 
+	/* stack용 anonymous page를 SPT에 등록하고, 성공하면 즉시 frame에 올린다. */
 	if (vm_alloc_page (VM_ANON | VM_MARKER_0, stack_bottom, true)) {
 		vm_claim_page (stack_bottom);
 	}
@@ -278,12 +284,15 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 	/* fault가 난 주소에 해당하는 page를 SPT에서 찾는다. */
 	page = spt_find_page (spt, addr);
 
-	/* SPT에 등록된 page가 없으면 아직 처리할 수 없다. */
+	/* SPT에 등록된 page가 없으면 stack growth 가능성을 확인 */
 	if (page == NULL) {
+		/* fault 주소가 현재 rsp 근처이고 USER_STACK 아래라면 정상적인 stack 확장으로 본다. */
 		if (addr >= f->rsp - 8 && addr < USER_STACK) {
+			/* stack page를 새로 만들고 성공 여부를 반환 */
 			vm_stack_growth (addr);
 			return true;
 		}
+		/* SPT에도 없고 stack 확장도 아니며 잘못된 주소 접근 */
 		return false;
 	}
 
@@ -402,9 +411,23 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		struct supplemental_page_table *src UNUSED) {
 }
 
+/* SPT hash table 안의 page 하나를 정리 */
+static void
+spt_destroy_page (struct hash_elem *e, void *aux UNUSED)
+{
+	/* hash table이 넘겨준 hash_elem에서 실제 struct page를 꺼낸다. */
+	struct page *page = hash_entry (e, struct page, hash_elem);
+
+	/* page 종류별 destroy를 호출하고 struct page 메모리를 해제 */
+	vm_dealloc_page (page);
+}
+
 /* Free the resource hold by the supplemental page table */
+/* 프로세스 종료 시 SPT가 가지고 있는 모든 page를 정리 */
 void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
+	/* SPT hash table을 파괴하면서 각 page마다 spt_destroy_page()를 호출 */
+	hash_destroy (&spt->pages, spt_destroy_page);
 }
