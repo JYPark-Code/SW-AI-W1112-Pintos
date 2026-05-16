@@ -232,7 +232,7 @@ vm_get_frame (void) {
 	}
 	else 
 	{
-		/* 새 frame은 아직 어떤 page와도 연결되지 않았따. */
+		/* 새 frame은 아직 어떤 page와도 연결되지 않았다. */
 		frame->page = NULL;
 	}
 
@@ -244,6 +244,11 @@ vm_get_frame (void) {
 /* Growing the stack. */
 static void
 vm_stack_growth (void *addr UNUSED) {
+	void *stack_bottom = pg_round_down (addr);
+
+	if (vm_alloc_page (VM_ANON | VM_MARKER_0, stack_bottom, true)) {
+		vm_claim_page (stack_bottom);
+	}
 }
 
 /* Handle the fault on write_protected page */
@@ -275,6 +280,10 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 
 	/* SPT에 등록된 page가 없으면 아직 처리할 수 없다. */
 	if (page == NULL) {
+		if (addr >= f->rsp - 8 && addr < USER_STACK) {
+			vm_stack_growth (addr);
+			return true;
+		}
 		return false;
 	}
 

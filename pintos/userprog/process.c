@@ -913,7 +913,10 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 /* Create a PAGE of stack at the USER_STACK. Return true on success. */
 static bool
 setup_stack (struct intr_frame *if_) {
+	/* stack page 준비 성공 여부 저장 */
 	bool success = false;
+
+	/* 첫 번째 user stack page의 시작 주소를 계산 */
 	void *stack_bottom = (void *) (((uint8_t *) USER_STACK) - PGSIZE);
 
 	/* TODO: Map the stack on stack_bottom and claim the page immediately.
@@ -921,6 +924,18 @@ setup_stack (struct intr_frame *if_) {
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
 
+	/* stack page를 anonymous page로 SPT에 등록. stack은 쓰기 가능해야 함*/
+	if (vm_alloc_page (VM_ANON | VM_MARKER_0, stack_bottom, true))
+	{
+		/* 등록한 stack page를 즉시 frame에 올리고 PML4에 연결 */
+		success = vm_claim_page (stack_bottom);
+
+		/* stack page 준비에 성공했다면 초기 rsp를 user stack의 맨 위로 설정 */
+		if (success) {
+			if_->rsp = USER_STACK;
+		}
+	}
+	/* stack page 준비 성공 여부를 반환 */
 	return success;
 }
 #endif /* VM */
