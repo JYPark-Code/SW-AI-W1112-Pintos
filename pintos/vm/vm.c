@@ -43,6 +43,7 @@ static struct frame *vm_evict_frame(void);
 
 // SPT init helper
 static uint64_t hash_page_address(const struct hash_elem *e, void *aux);
+static bool compare_page_less(const struct hash_elem *a, const struct hash_elem *b, void *aux);
 
 /* Create the pending page object with initializer. If you want to create a
  * page, do not create it directly and make it through this function or
@@ -124,7 +125,6 @@ void spt_remove_page(struct supplemental_page_table *spt, struct page *page)
 	// 해시 테이블에서 delete
 	hash_delete(&spt->hash_table, &page->hash_elem);
 	vm_dealloc_page(page);
-	return true;
 }
 
 /* Get the struct frame, that will be evicted. */
@@ -167,7 +167,6 @@ vm_get_frame(void)
 	{
 		// eviction 로직(아직 미구현)
 		free(frame);
-		kill();
 	}
 	// 2. 빈 프레임을 할당하는 것이므로, page는 NULL로 초기화
 	// 실제 요청(vm_do_claim_page)에서 실제로 연결한다.
@@ -178,8 +177,9 @@ vm_get_frame(void)
 
 /* Growing the stack. */
 static void
-vm_stack_growth(void *addr UNUSED)
+vm_stack_growth(void *addr)
 {
+	vm_alloc_page(VM_ANON | VM_MARKER_STACK, pg_round_down(addr), true);
 }
 
 /* Handle the fault on write_protected page */
@@ -188,6 +188,7 @@ vm_handle_wp(struct page *page UNUSED)
 {
 	// 1. read-only 페이지에 대해서 write 접근했을때 -> 이건 죽여야 됨
 	// 2. COW
+	return false;
 }
 
 /* Return true on success */
@@ -202,12 +203,23 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr,
 
 	struct supplemental_page_table *spt = &thread_current()->spt;
 	struct page *page = NULL;
+	// 스택 포인터
+	uintptr_t rsp;
+	// 스택 크기 제한
+	void *stack_limit = USER_STACK - (1 << 20);
+
+	// 어떤 모드에서 호출되던, rsp에는 user_stack의 rsp 저장
+	if (user == true)
+		rsp = f->rsp;
+	else
+		rsp = thread_current()->user_rsp;
+
+	// SPT 검사
+	page = spt_find_page(spt, addr);
 
 	// CASE1: not_present == true (페이지가 없을 때 or present == 0)
 	if (not_present == true)
 	{
-		// SPT 검사
-		page = spt_find_page(spt, addr);
 		// 1) SPT에 존재 O -> Lazy loading / swap in
 		if (page != NULL)
 		{
@@ -217,8 +229,18 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr,
 		else
 		{
 			// stack growth 조건 판단
-			// if 맞으면 -> stack_growth + spt_find_page + return vm_do_claim_page(page);
-			// 아니면 return false
+			// 1. rsp 아래 8바이트까지 접근 가능
+			// 2. 최대 1MB 스택 제한
+			if (addr >= (void *)(rsp - 8) && addr >= stack_limit)
+			{
+				vm_stack_growth(addr);
+				page = spt_find_page(spt, addr);
+				return vm_do_claim_page(page);
+			}
+			else
+			{
+				return false;
+			}
 		}
 	}
 
@@ -251,6 +273,8 @@ bool vm_claim_page(void *va)
 	/* TODO: Fill this function */
 	// SPT에서 va에 해당하는 page 찾기
 	page = spt_find_page(&thread_current()->spt, va);
+	if (page == NULL)
+		return false;
 	return vm_do_claim_page(page);
 }
 

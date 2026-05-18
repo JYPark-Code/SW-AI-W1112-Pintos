@@ -13,23 +13,24 @@
 struct file;
 
 /* States in a thread's life cycle. */
-enum thread_status {
-	THREAD_RUNNING,     /* Running thread. */
-	THREAD_READY,       /* Not running but ready to run. */
-	THREAD_BLOCKED,     /* Waiting for an event to trigger. */
-	THREAD_DYING        /* About to be destroyed. */
+enum thread_status
+{
+	THREAD_RUNNING, /* Running thread. */
+	THREAD_READY,	/* Not running but ready to run. */
+	THREAD_BLOCKED, /* Waiting for an event to trigger. */
+	THREAD_DYING	/* About to be destroyed. */
 };
 
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
 typedef int tid_t;
-#define TID_ERROR ((tid_t) -1)          /* Error value for tid_t. */
+#define TID_ERROR ((tid_t) - 1) /* Error value for tid_t. */
 #define FD_MAX 128
 
 /* Thread priorities. */
-#define PRI_MIN 0                       /* Lowest priority. */
-#define PRI_DEFAULT 31                  /* Default priority. */
-#define PRI_MAX 63                      /* Highest priority. */
+#define PRI_MIN 0	   /* Lowest priority. */
+#define PRI_DEFAULT 31 /* Default priority. */
+#define PRI_MAX 63	   /* Highest priority. */
 
 /* A kernel thread or user process.
  *
@@ -88,49 +89,51 @@ typedef int tid_t;
  * only because they are mutually exclusive: only a thread in the
  * ready state is on the run queue, whereas only a thread in the
  * blocked state is on a semaphore wait list. */
-struct thread {
+struct thread
+{
 	/* Owned by thread.c. */
-	tid_t tid;                          /* Thread identifier. */
-	enum thread_status status;          /* Thread state. */
-	char name[16];                      /* Name (for debugging purposes). */
-	int priority;                       /* Priority. */
-	int64_t wakeup_tick;                /* timer_sleep()에서 설정되며, timer_interrupt()에서 비교되어 깨워진다. */
+	tid_t tid;				   /* Thread identifier. */
+	enum thread_status status; /* Thread state. */
+	char name[16];			   /* Name (for debugging purposes). */
+	int priority;			   /* Priority. */
+	int64_t wakeup_tick;	   /* timer_sleep()에서 설정되며, timer_interrupt()에서 비교되어 깨워진다. */
 
-	int original_priority;              /* donation 이전 원래 우선순위 */
-	struct lock *wait_on_lock;          /* 현재 기다리고 있는 lock */
-	struct list donations;              /* 나에게 donation한 thread들의 리스트 */
-	struct list_elem donation_elem;     /* donations 리스트 연결용 */
+	int original_priority;			/* donation 이전 원래 우선순위 */
+	struct lock *wait_on_lock;		/* 현재 기다리고 있는 lock */
+	struct list donations;			/* 나에게 donation한 thread들의 리스트 */
+	struct list_elem donation_elem; /* donations 리스트 연결용 */
 
 	/* Shared between thread.c and synch.c. */
-	struct list_elem elem;             /* ready_list, sleep_list용 */
+	struct list_elem elem; /* ready_list, sleep_list용 */
 	/* fd 테이블 */
 	struct file *fd_table[128];
-	int fd_next;   /* 다음 할당할 fd 번호, 2로 초기화 */
+	int fd_next;	  /* 다음 할당할 fd 번호, 2로 초기화 */
 	bool wait_called; /* 부모가 wait()를 호출했는지 여부 */
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
-	uint64_t *pml4;                     /* Page map level 4 */
-	int exit_status;                    /* SYS_EXIT로 전달받은 종료 코드 */
+	uint64_t *pml4;	 /* Page map level 4 */
+	int exit_status; /* SYS_EXIT로 전달받은 종료 코드 */
 
 	/* 부모-자식 동기화 (process_wait 정식 구현용) */
-	struct thread *parent;              /* 나를 만든 스레드 (없으면 NULL) */
-	struct list children;               /* 내가 만든 자식 스레드 리스트 */
-	struct list_elem child_elem;        /* 부모의 children 리스트에 들어가는 노드 */
-	struct semaphore wait_sema;         /* 부모가 자식 종료 대기: 자식이 up */
-	struct semaphore exit_sema;         /* 자식이 부모의 회수 대기: 부모가 up */
-	struct semaphore fork_sema;         /* fork를 위한 세마포어 */
-	bool fork_success;                  /* 자식의 상태, thread_create()는 성공했는데 메모리 복사에서 실패여부 */
+	struct thread *parent;		 /* 나를 만든 스레드 (없으면 NULL) */
+	struct list children;		 /* 내가 만든 자식 스레드 리스트 */
+	struct list_elem child_elem; /* 부모의 children 리스트에 들어가는 노드 */
+	struct semaphore wait_sema;	 /* 부모가 자식 종료 대기: 자식이 up */
+	struct semaphore exit_sema;	 /* 자식이 부모의 회수 대기: 부모가 up */
+	struct semaphore fork_sema;	 /* fork를 위한 세마포어 */
+	bool fork_success;			 /* 자식의 상태, thread_create()는 성공했는데 메모리 복사에서 실패여부 */
 
 #endif
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
 	struct supplemental_page_table spt;
+	uintptr_t user_rsp; // syscall 진입 시 저장하는 유저 스택 포인터
 #endif
 
 	/* Owned by thread.c. */
-	struct intr_frame tf;               /* Information for switching */
-	unsigned magic;                     /* Detects stack overflow. */
+	struct intr_frame tf; /* Information for switching */
+	unsigned magic;		  /* Detects stack overflow. */
 };
 
 /* If false (default), use round-robin scheduler.
@@ -138,39 +141,39 @@ struct thread {
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
 bool cmp_priority(const struct list_elem *a,
-                  const struct list_elem *b,
-                  void *aux);
+				  const struct list_elem *b,
+				  void *aux);
 
 extern struct list sleep_list;
 
-void thread_init (void);
-void thread_start (void);
+void thread_init(void);
+void thread_start(void);
 
-void thread_tick (void);
-void thread_print_stats (void);
+void thread_tick(void);
+void thread_print_stats(void);
 
-typedef void thread_func (void *aux);
-tid_t thread_create (const char *name, int priority, thread_func *, void *);
+typedef void thread_func(void *aux);
+tid_t thread_create(const char *name, int priority, thread_func *, void *);
 
-void thread_block (void);
-void thread_unblock (struct thread *);
+void thread_block(void);
+void thread_unblock(struct thread *);
 
-struct thread *thread_current (void);
-tid_t thread_tid (void);
-const char *thread_name (void);
+struct thread *thread_current(void);
+tid_t thread_tid(void);
+const char *thread_name(void);
 
-void thread_exit (void) NO_RETURN;
-void thread_yield (void);
+void thread_exit(void) NO_RETURN;
+void thread_yield(void);
 
-int thread_get_priority (void);
-void thread_set_priority (int);
+int thread_get_priority(void);
+void thread_set_priority(int);
 void refresh_priority(void);
 
-int thread_get_nice (void);
-void thread_set_nice (int);
-int thread_get_recent_cpu (void);
-int thread_get_load_avg (void);
+int thread_get_nice(void);
+void thread_set_nice(int);
+int thread_get_recent_cpu(void);
+int thread_get_load_avg(void);
 
-void do_iret (struct intr_frame *tf);
+void do_iret(struct intr_frame *tf);
 
 #endif /* threads/thread.h */

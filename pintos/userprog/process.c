@@ -810,9 +810,25 @@ install_page(void *upage, void *kpage, bool writable)
 static bool
 lazy_load_segment(struct page *page, void *aux)
 {
-	/* TODO: Load the segment from the file */
-	/* TODO: This called when the first page fault occurs on address VA. */
-	/* TODO: VA is available when calling this function. */
+	struct lazy_load_info *info = (struct lazy_load_info *)aux;
+	void *kva = page->frame->kva;
+
+	// 1. 파일 오프셋 이동
+	file_seek(info->file, info->ofs);
+
+	// 2. file에서 page_read_bytes만큼 읽고, 실제로 읽은 바이트 수 반환
+	if (file_read(info->file, kva, info->page_read_bytes) != (off_t)info->page_read_bytes)
+	{
+		free(info);
+		return false;
+	}
+
+	// 3. 나머지 공간을 0으로 채우기.
+	memset(kva + info->page_read_bytes, 0, info->page_zero_bytes);
+
+	// 4. lazy_load_into는 더 이상 필요하지 않으므로 free
+	free(info);
+	return true;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -847,7 +863,7 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
 		struct lazy_load_info *aux = malloc(sizeof *aux);
-		aux->file = file;
+		aux->file = file_reopen(file);
 		aux->ofs = ofs;
 		aux->page_read_bytes = page_read_bytes;
 		aux->page_zero_bytes = page_zero_bytes;
@@ -860,6 +876,8 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
+		// 다음 오프셋으로 동
+		ofs += page_read_bytes;
 	}
 	return true;
 }

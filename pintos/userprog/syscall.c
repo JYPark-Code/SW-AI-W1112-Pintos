@@ -14,6 +14,10 @@
 #include "filesys/file.h"
 #include "devices/input.h"	/* input_getc() — SYS_READ stdin 분기에서 사용 */
 #include "threads/palloc.h" /* SYS_EXEC 에서 palloc_get_page() 인자로 넣을 떄 PAL_ZERO 필요*/
+#include "vm/vm.h"
+
+// 주소가 writable한지 확인하는 헬퍼 함수
+static void is_writable_user_addr(const void *uaddr);
 
 /* 파일 시스템 락 선언 */
 struct lock filesys_lock;
@@ -63,13 +67,47 @@ void syscall_init(void)
  *   - is_user_vaddr(p)는 ((uint64_t)p < KERN_BASE)와 동치 →
  *     커널 영역 포인터를 유저가 넘긴 경우 차단
  * 언맵된 페이지/페이지 경계 걸침 등 정식 검증은 이후 단계에서 추가. */
-static void
-validate_user_addr(const void *uaddr)
+static void validate_user_addr(const void *uaddr)
 {
-	if (uaddr == NULL || !is_user_vaddr(uaddr) || pml4_get_page(thread_current()->pml4, uaddr) == NULL)
+	if (uaddr == NULL || !is_user_vaddr(uaddr))
 	{
 		thread_current()->exit_status = -1;
 		thread_exit();
+	}
+#ifndef VM
+	if (pml4_get_page(thread_current()->pml4, uaddr) == NULL)
+	{
+		thread_current()->exit_status = -1;
+		thread_exit();
+	}
+#endif
+}
+
+static void is_writable_user_addr(const void *uaddr)
+{
+	struct page *page = spt_find_page(&thread_current()->spt, uaddr);
+	// CASE 1 : 페이지가 존재함
+	if (page != NULL)
+	{
+		// 쓰기 불가능이면 종료
+		if (page->writable == false)
+		{
+			thread_current()->exit_status = -1;
+			thread_exit();
+		}
+	}
+	// CASE 2 : 페이지가 존재하지 않음
+	else
+	{
+		uintptr_t user_rsp = thread_current()->user_rsp;
+		void *stack_limit = (void *)(USER_STACK - (1 << 20));
+
+		// 만약 스택 growth가 불가능한 영역이면 종료
+		if ((uaddr >= (void *)(user_rsp - 8) && uaddr >= stack_limit) == false)
+		{
+			thread_current()->exit_status = -1;
+			thread_exit();
+		}
 	}
 }
 
@@ -79,6 +117,8 @@ validate_user_addr(const void *uaddr)
  * intr_frame->R 의 동명 필드에 그대로 들어 있다. */
 void syscall_handler(struct intr_frame *f UNUSED)
 {
+	// 현재 스레드의 유저 스택 포인터를, thread 구조체의 user_rsp에 저장
+	thread_current()->user_rsp = f->rsp;
 	uint64_t sysno = f->R.rax;
 
 	switch (sysno)
@@ -183,8 +223,10 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		const void *buffer = (const void *)f->R.rsi;
 		unsigned size = (unsigned)f->R.rdx;
 
-		/* stage 0: KERN_BASE 체크만 (요구사항대로 최소화) */
+		// 1. 유효한 주소인지 검사
+		// 2. write 가능한지 검사
 		validate_user_addr(buffer);
+		is_writable_user_addr(buffer);
 
 		lock_acquire(&filesys_lock);
 

@@ -88,6 +88,7 @@ kill(struct intr_frame *f)
 		printf("%s: dying due to interrupt %#04llx (%s).\n",
 			   thread_name(), f->vec_no, intr_name(f->vec_no));
 		intr_dump_frame(f);
+		thread_current()->exit_status = -1;
 		thread_exit();
 
 	case SEL_KCSEG:
@@ -143,9 +144,10 @@ page_fault(struct intr_frame *f)
 	user = (f->error_code & PF_U) != 0;
 
 #ifdef VM
-	/* For project 3 and later. */
 	if (vm_try_handle_fault(f, fault_addr, user, write, not_present))
 		return;
+	thread_current()->exit_status = -1;
+	thread_exit();
 #endif
 	/* Count page faults. */
 	page_fault_cnt++;
