@@ -93,410 +93,420 @@
   },
   "userprog": {
     "tests/userprog/stage0/write-fd1": {
-      "count": 6,
-      "last_used": 1778244133.572,
+      "count": 7,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/stage0/wait-blocks": {
-      "count": 6,
-      "last_used": 1778244133.572,
+      "count": 7,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/args-none": {
-      "count": 8,
-      "last_used": 1778244166.876,
+      "count": 15,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/args-single": {
-      "count": 8,
-      "last_used": 1778244166.876,
+      "count": 15,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/args-multiple": {
-      "count": 8,
-      "last_used": 1778244166.876,
+      "count": 15,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/args-many": {
-      "count": 8,
-      "last_used": 1778244166.876,
+      "count": 15,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/args-dbl-space": {
-      "count": 8,
-      "last_used": 1778244166.876,
+      "count": 15,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/halt": {
-      "count": 7,
-      "last_used": 1778244166.876,
+      "count": 14,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/exit": {
-      "count": 7,
-      "last_used": 1778244166.876,
+      "count": 14,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/wait-simple": {
-      "count": 6,
-      "last_used": 1778244166.876,
+      "count": 14,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/wait-twice": {
-      "count": 17,
-      "last_used": 1778244166.876,
+      "count": 25,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/wait-killed": {
-      "count": 6,
-      "last_used": 1778244166.876,
+      "count": 15,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/wait-bad-pid": {
-      "count": 6,
-      "last_used": 1778244166.876,
+      "count": 14,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/create-normal": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/create-empty": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/create-null": {
-      "count": 6,
-      "last_used": 1778244166.876,
+      "count": 13,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/create-bad-ptr": {
-      "count": 7,
-      "last_used": 1778244166.876,
+      "count": 14,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/create-long": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/create-exists": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/create-bound": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/open-normal": {
-      "count": 5,
-      "last_used": 1778244166.876,
+      "count": 12,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/open-missing": {
-      "count": 3,
-      "last_used": 1778244166.876,
+      "count": 10,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/open-boundary": {
-      "count": 3,
-      "last_used": 1778244166.876,
+      "count": 10,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/open-empty": {
-      "count": 3,
-      "last_used": 1778244166.876,
+      "count": 10,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/open-null": {
-      "count": 3,
-      "last_used": 1778244166.876,
+      "count": 10,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/open-bad-ptr": {
-      "count": 3,
-      "last_used": 1778244166.876,
+      "count": 10,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/open-twice": {
-      "count": 3,
-      "last_used": 1778244166.876,
+      "count": 10,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/close-normal": {
-      "count": 7,
-      "last_used": 1778244166.876,
+      "count": 14,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/close-twice": {
-      "count": 6,
-      "last_used": 1778244166.876,
+      "count": 13,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/close-bad-fd": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/read-normal": {
-      "count": 4,
-      "last_used": 1778244166.876,
+      "count": 11,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/read-bad-ptr": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/read-boundary": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/read-zero": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/read-stdout": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/read-bad-fd": {
-      "count": 4,
-      "last_used": 1778244166.876,
+      "count": 11,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/write-normal": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/write-bad-ptr": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/write-boundary": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/write-zero": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/write-stdin": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/write-bad-fd": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/fork-once": {
-      "count": 7,
-      "last_used": 1778244166.876,
+      "count": 14,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/fork-multiple": {
-      "count": 6,
-      "last_used": 1778244166.876,
+      "count": 13,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/fork-recursive": {
-      "count": 6,
-      "last_used": 1778244166.876,
+      "count": 13,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/fork-read": {
-      "count": 6,
-      "last_used": 1778244166.876,
+      "count": 13,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/fork-close": {
-      "count": 6,
-      "last_used": 1778244166.876,
+      "count": 13,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/fork-boundary": {
-      "count": 6,
-      "last_used": 1778244166.876,
+      "count": 13,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/exec-once": {
-      "count": 3,
-      "last_used": 1778244166.876,
+      "count": 10,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/exec-arg": {
-      "count": 3,
-      "last_used": 1778244166.876,
+      "count": 10,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/exec-boundary": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 10,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/exec-missing": {
-      "count": 30,
-      "last_used": 1778244166.876,
+      "count": 37,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/exec-bad-ptr": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/exec-read": {
-      "count": 2,
-      "last_used": 1778244166.876,
+      "count": 9,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/multi-recurse": {
-      "count": 2,
-      "last_used": 1778244133.572,
+      "count": 5,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/multi-child-fd": {
-      "count": 2,
-      "last_used": 1778244133.572,
+      "count": 4,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/rox-simple": {
-      "count": 2,
-      "last_used": 1778244133.572,
+      "count": 3,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/rox-child": {
-      "count": 2,
-      "last_used": 1778244133.572,
+      "count": 3,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/rox-multichild": {
-      "count": 2,
-      "last_used": 1778244133.572,
+      "count": 3,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/bad-read": {
-      "count": 2,
-      "last_used": 1778244133.572,
+      "count": 3,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/bad-write": {
-      "count": 2,
-      "last_used": 1778244133.572,
+      "count": 3,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/bad-read2": {
-      "count": 2,
-      "last_used": 1778244133.572,
+      "count": 3,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/bad-write2": {
-      "count": 2,
-      "last_used": 1778244133.572,
+      "count": 3,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/bad-jump": {
-      "count": 2,
-      "last_used": 1778244133.572,
+      "count": 3,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/bad-jump2": {
-      "count": 2,
-      "last_used": 1778244133.572,
+      "count": 3,
+      "last_used": 1778847787.579,
       "last_action": "run"
     },
     "tests/userprog/no-vm/multi-oom": {
-      "count": 2,
-      "last_used": 1778244133.572,
+      "count": 5,
+      "last_used": 1778847787.579,
+      "last_action": "run"
+    },
+    "tests/userprog/dup2/dup2-complex": {
+      "count": 1,
+      "last_used": 1778823252.49,
+      "last_action": "run"
+    },
+    "tests/userprog/dup2/dup2-simple": {
+      "count": 1,
+      "last_used": 1778823252.49,
       "last_action": "run"
     }
   },
   "vm": {
     "tests/vm/pt-grow-stack": {
-      "count": 20,
-      "last_used": 1778649449.016,
+      "count": 23,
+      "last_used": 1778823845.821,
       "last_action": "run"
     },
     "tests/vm/pt-grow-bad": {
-      "count": 23,
-      "last_used": 1778649449.016,
+      "count": 26,
+      "last_used": 1778823845.821,
       "last_action": "run"
     },
     "tests/vm/pt-big-stk-obj": {
-      "count": 20,
-      "last_used": 1778649449.016,
+      "count": 23,
+      "last_used": 1778823845.821,
       "last_action": "run"
     },
     "tests/vm/pt-bad-addr": {
-      "count": 21,
-      "last_used": 1778649449.016,
+      "count": 24,
+      "last_used": 1778823845.821,
       "last_action": "run"
     },
     "tests/vm/pt-bad-read": {
-      "count": 26,
-      "last_used": 1778649449.016,
+      "count": 29,
+      "last_used": 1778823845.821,
       "last_action": "run"
     },
     "tests/vm/pt-write-code": {
-      "count": 21,
-      "last_used": 1778649449.016,
+      "count": 24,
+      "last_used": 1778823845.821,
       "last_action": "run"
     },
     "tests/vm/pt-write-code2": {
-      "count": 34,
-      "last_used": 1778649449.016,
+      "count": 37,
+      "last_used": 1778823845.821,
       "last_action": "run"
     },
     "tests/vm/pt-grow-stk-sc": {
-      "count": 31,
-      "last_used": 1778649449.016,
+      "count": 35,
+      "last_used": 1778823845.821,
       "last_action": "run"
     },
     "tests/vm/page-linear": {
-      "count": 9,
-      "last_used": 1778648587.753,
+      "count": 13,
+      "last_used": 1779068716.699,
       "last_action": "run"
     },
     "tests/vm/page-parallel": {
-      "count": 17,
-      "last_used": 1778743155.824,
+      "count": 27,
+      "last_used": 1779084835.992,
       "last_action": "run"
     },
     "tests/vm/page-merge-seq": {
-      "count": 19,
-      "last_used": 1778743390.824,
+      "count": 22,
+      "last_used": 1779087466.657,
       "last_action": "run"
     },
     "tests/vm/page-merge-par": {
-      "count": 10,
-      "last_used": 1778743471.414,
+      "count": 13,
+      "last_used": 1779087466.657,
       "last_action": "run"
     },
     "tests/vm/page-merge-stk": {
-      "count": 10,
-      "last_used": 1778743471.414,
+      "count": 19,
+      "last_used": 1779087466.657,
       "last_action": "run"
     },
     "tests/vm/page-merge-mm": {
-      "count": 10,
-      "last_used": 1778743471.414,
+      "count": 19,
+      "last_used": 1779087466.657,
       "last_action": "run"
     },
     "tests/vm/page-shuffle": {
-      "count": 9,
-      "last_used": 1778648587.753,
+      "count": 13,
+      "last_used": 1779068716.699,
       "last_action": "run"
     }
   }

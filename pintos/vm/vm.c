@@ -7,6 +7,9 @@
 #include "threads/mmu.h"
 #include "userprog/process.h"
 #include <string.h>
+#include "threads/synch.h"
+static struct list frame_table;
+static struct lock frame_table_lock;
 
 // va를 해시값으로 변환
 static uint64_t page_hash(const struct hash_elem *e, void *aux UNUSED){
@@ -44,6 +47,8 @@ vm_init (void) {
 	register_inspect_intr ();
 	/* DO NOT MODIFY UPPER LINES. */
 	/* TODO: Your code goes here. */
+	list_init(&frame_table);
+    lock_init(&frame_table_lock);
 }
 
 /* Get the type of the page. This function is useful if you want to know the
@@ -104,6 +109,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		
 		uninit_new(page, upage, init, type, aux, page_initializer);
 		page->writable = writable;
+		page->owner = thread_current();
 		/* TODO: Insert the page into the spt. */
 		if (!spt_insert_page(spt, page))
     		goto err;
@@ -156,6 +162,9 @@ static struct frame *
 vm_get_victim (void) {
 	struct frame *victim = NULL;
 	 /* TODO: The policy for eviction is up to you. */
+	 struct list_elem *frame_list_first_elem = list_pop_front(&frame_table);
+	 victim = list_entry(frame_list_first_elem, struct frame, frame_elem);
+
 
 	return victim;
 }
@@ -166,8 +175,8 @@ static struct frame *
 vm_evict_frame (void) {
 	struct frame *victim UNUSED = vm_get_victim ();
 	/* TODO: swap out the victim and return the evicted frame. */
-
-	return NULL;
+	swap_out(victim->page);
+	return victim;
 }
 
 /* palloc() and get frame. If there is no available page, evict the page
@@ -176,13 +185,29 @@ vm_evict_frame (void) {
  * space.*/
 static struct frame *
 vm_get_frame (void) {
-	struct frame *frame = malloc(sizeof(struct frame));
+
 	/* TODO: Fill this function. */
+	/*
+	1. frame 구조체 malloc
+	2. palloc_get_page(PAL_USER) 시도
+	3. 성공 → frame_table에 추가, 반환
+	4. 실패(메모리 부족) → vm_evict_frame() 호출해서 victim frame 비워서 반환
+	*/
+	struct frame *frame = malloc(sizeof(struct frame));
 	frame->kva = palloc_get_page(PAL_USER);
 	
-	if (frame->kva == NULL)
-    	PANIC("todo: swap out");
+	if (frame->kva == NULL){
+    	free(frame);
+		struct frame *evict_frame = vm_evict_frame();
+		ASSERT (evict_frame != NULL);
 
+		list_push_back(&frame_table, &evict_frame->frame_elem);
+		evict_frame->page = NULL;
+		ASSERT (evict_frame->page == NULL);
+		return evict_frame;
+
+	}
+	list_push_back(&frame_table, &frame->frame_elem);
 	frame->page = NULL;
 
 	ASSERT (frame != NULL);

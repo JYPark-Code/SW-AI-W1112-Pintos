@@ -5,6 +5,7 @@ struct page;
 enum vm_type;
 
 struct anon_page {
+    size_t swap_slot;   /* SIZE_MAX = 메모리에 있음 / 아니면 bitmap 인덱스 */
 };
 
 void vm_anon_init (void);

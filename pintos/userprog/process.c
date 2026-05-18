@@ -27,6 +27,7 @@ static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
+extern struct lock filesys_lock;
 
 #define ARGV_MAX 64     /* 인자 개수 상한 (args-many 테스트 기준 22개로 충분) */
 
@@ -960,6 +961,10 @@ install_page (void *upage, void *kpage, bool writable) {
 
 static bool
 lazy_load_segment (struct page *page, void *aux) {
+
+	ASSERT(page->frame != NULL);
+	ASSERT(page->frame->kva != NULL);
+
 	/*
 		1. aux에서 파일 정보 꺼내기 
 		2. 파일에서 실제로 읽기
@@ -975,8 +980,13 @@ lazy_load_segment (struct page *page, void *aux) {
 		3. 나머지 zero_bytes 0으로 채우기
 		4. aux free
 	*/
+	bool held = lock_held_by_current_thread(&filesys_lock);
+	if (!held)
+		lock_acquire(&filesys_lock);
 	file_seek(info->file, info->offset);
 	off_t target = file_read(info->file, page->frame->kva, info->read_bytes);
+	if (!held)
+    	lock_release(&filesys_lock);
 	if (target != info->read_bytes){
 		return false;
 	}

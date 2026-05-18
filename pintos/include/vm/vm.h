@@ -49,6 +49,7 @@ struct page {
 	/* Your implementation */
 	bool writable; /* 읽기 가능? */
 	struct hash_elem spt_elem;  /* SPT 해시테이블 */
+	struct thread *owner;
 
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
@@ -67,6 +68,7 @@ struct page {
 struct frame {
 	void *kva;
 	struct page *page;
+	struct list_elem frame_elem;
 };
 
 /* The function table for page operations.
