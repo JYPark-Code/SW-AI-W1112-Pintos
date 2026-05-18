@@ -292,7 +292,23 @@ __do_fork (void *aux) {
 	process_activate (current);
 #ifdef VM
 	supplemental_page_table_init (&current->spt);
-	if (!supplemental_page_table_copy (&current->spt, &parent->spt))
+	/* 부모 running_file 을 file_duplicate 해 child->running_file 로 두면
+	 * 자식의 UNINIT aux 가 모두 이를 공유해 lazy fault 가 가능하다 (자식이
+	 * exec 안 하는 경로도 안전). 다중 자식 fork (page-merge-par) 에서
+	 * file_duplicate 와 부모의 syscall 이 open_inodes 를 동시에 만지면
+	 * 리스트가 깨지므로 filesys_lock 으로 직렬화. SPT_copy 자체는 filesys 를
+	 * 안 만지지만 같은 락 안에서 처리해 자식 fork 전체를 한 묶음으로 둔다. */
+	lock_acquire(&filesys_lock);
+	if (parent->running_file != NULL) {
+		current->running_file = file_duplicate(parent->running_file);
+		if (current->running_file == NULL) {
+			lock_release(&filesys_lock);
+			goto error;
+		}
+	}
+	bool spt_ok = supplemental_page_table_copy (&current->spt, &parent->spt);
+	lock_release(&filesys_lock);
+	if (!spt_ok)
 		goto error;
 #else
 	/* pml4_for_each + duplicate_pte로 부모의 모든 페이지를 자식에 복사.
@@ -391,17 +407,17 @@ process_exec (void *f_name) {
 	 *   세팅하므로 여기서 별도 갱신이 필요 없다. */
 
 	/* load()가 새 페이지 테이블과 새 SPT를 만들기 시작하므로
-	그 전에 기존 SPT를 정리해야 메모리 누수 없이 깔끔하게 교체됨 */
+	그 전에 기존 SPT를 정리해야 메모리 누수 없이 깔끔하게 교체됨.
+	owns_file=false 패턴이라 uninit_destroy 가 file_close 를 호출하지 않으므로
+	여기서는 별도 filesys_lock 이 필요 없다 (필요해진다면 추가). */
 	#ifdef VM
-    // printf("before kill: exit_status=%d\n", thread_current()->exit_status);
     supplemental_page_table_kill(&thread_current()->spt);
-    // printf("after kill: exit_status=%d\n", thread_current()->exit_status);
     supplemental_page_table_init(&thread_current()->spt);
 	#endif
 
-
 	/* load()에는 프로그램 이름(argv[0])만 넘긴다.
-	 * 나머지 인자는 argument_stack()에서 유저 스택에 직접 쓴다. */
+	 * 나머지 인자는 argument_stack()에서 유저 스택에 직접 쓴다.
+	 * fork+exec 자식의 fork-time pml4 는 load() 의 done 블록이 회수한다. */
 	success = load (argv[0], &_if);
 
 
@@ -686,8 +702,13 @@ load (const char *file_name, struct intr_frame *if_) {
 	t->pml4 = new_pml4;  /* 임시로 교체 — 이후 ELF 세그먼트가 여기로 매핑됨 */
 	process_activate (thread_current ());
 
-	/* Open executable file. */
+	/* filesys_open 만 락 안에서 (open_inodes 리스트 mutation).
+	 * file_read/file_seek 은 inode 내부 데이터만 만지므로 락 밖에서 안전 —
+	 * load 전체를 락으로 감싸면 setup_stack 까지 호출 체인이 끌고가서
+	 * 인터럽트 프레임이 thread struct 를 덮을 위험이 있다. */
+	lock_acquire(&filesys_lock);
 	file = filesys_open (file_name);
+	lock_release(&filesys_lock);
 	if (file == NULL) {
 		printf ("load: %s: open failed\n", file_name);
 		goto done;
@@ -964,6 +985,7 @@ lazy_load_segment (struct page *page, void *aux) {
 
 	ASSERT(page->frame != NULL);
 	ASSERT(page->frame->kva != NULL);
+	ASSERT(aux != NULL);
 
 	/*
 		1. aux에서 파일 정보 꺼내기 
@@ -972,6 +994,10 @@ lazy_load_segment (struct page *page, void *aux) {
 	*/
 	/* TODO: Load the segment from the file */
 	struct lazy_load_aux *info = (struct lazy_load_aux *) aux;
+
+	ASSERT(info->read_bytes <= PGSIZE);
+    ASSERT(info->zero_bytes <= PGSIZE);
+    ASSERT(info->read_bytes + info->zero_bytes == PGSIZE);
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
 	/*
@@ -988,9 +1014,16 @@ lazy_load_segment (struct page *page, void *aux) {
 	if (!held)
     	lock_release(&filesys_lock);
 	if (target != info->read_bytes){
+		if (info->owns_file)
+			file_close(info->file);
+		free(info);
 		return false;
 	}
 	memset((uint8_t *)page->frame->kva + info->read_bytes, 0, info->zero_bytes);
+	/* 자식 (owns_file=true) 만 aux 의 file 소유 — 여기서 회수.
+	 * 부모는 running_file 을 공유하므로 process_cleanup 에 맡긴다. */
+	if (info->owns_file)
+		file_close(info->file);
 	free(info);
 	return true;
 }
@@ -1025,9 +1058,17 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
 		struct lazy_load_aux *info = malloc(sizeof(struct lazy_load_aux));
+		if (info == NULL)
+			return false;
 
-		/* info 구조체에 정보 연결이 필요 */
+		/* 부모는 running_file 을 공유 (file_duplicate 페이지마다 하면 kernel
+		 * pool 이 빠르게 고갈됨). owns_file=false 이므로 lazy_load_segment /
+		 * uninit_destroy 가 file_close 하지 않고, process_cleanup 에서
+		 * running_file 한 번만 close 한다.
+		 * fork 시 supplemental_page_table_copy 는 file_duplicate 후
+		 * owns_file=true 로 세팅한다. */
 		info->file = file;
+		info->owns_file = false;
 		info->offset = ofs;
 		info->read_bytes = page_read_bytes;
 		info->zero_bytes = page_zero_bytes;

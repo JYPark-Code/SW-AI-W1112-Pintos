@@ -48,9 +48,13 @@ static bool
 anon_swap_in (struct page *page, void *kva) {
 	struct anon_page *anon_page = &page->anon;
 
-	if (anon_page->swap_slot == SIZE_MAX)
+	if (anon_page->swap_slot == SIZE_MAX){
+		// printf("[swap_in_first] va=%p kva=%p\n", page->va, kva);
         return true;  // 첫 fault — swap에 데이터 없음
+	}
 
+	// printf("[swap_in_disk] va=%p slot=%zu kva=%p frame_kva=%p\n",
+    //        page->va, anon_page->swap_slot, kva, page->frame ? page->frame->kva : NULL);
 	/*
 	1. anon_page->swap_slot에서 slot 번호 읽기
 	2. disk_read 8회로 디스크에서 kva로 읽어오기
@@ -87,8 +91,24 @@ anon_swap_out (struct page *page) {
 	pml4_clear_page(page->owner->pml4, page->va);
 
 	anon_page->swap_slot = slot;
+
+	// printf("[swap_out] va=%p slot=%zu owner=%p frame_kva=%p\n",
+    //        page->va, slot, page->owner, page->frame ? page->frame->kva : NULL);
+
 	return true;
 
+}
+
+/* fork 시 부모 anon page 가 swap 에 있을 때 부모 슬롯에서 dst kva 로 직접 읽어온다.
+ * 부모 슬롯/매핑은 그대로 유지 — 자식만 자신의 frame 으로 데이터 복사. */
+void
+anon_clone_from_swap (struct page *src_page, void *dst_kva) {
+	struct anon_page *anon_page = &src_page->anon;
+	ASSERT (anon_page->swap_slot != SIZE_MAX);
+	size_t slot = anon_page->swap_slot;
+	for (int i = 0; i < 8; i++) {
+		disk_read(swap_disk, slot * 8 + i, (uint8_t *)dst_kva + i * 512);
+	}
 }
 
 /* Destroy the anonymous page. PAGE will be freed by the caller. */

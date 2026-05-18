@@ -27,7 +27,15 @@ static bool page_less(const struct hash_elem *a, const struct hash_elem *b, void
 static void
 page_destructor (struct hash_elem *e, void *aux UNUSED) {
     struct page *page = hash_entry(e, struct page, spt_elem);
+    /* vm_evict_frame 이 victim 의 page->frame 을 NULL 로 끊어주므로
+     * 여기서 page->frame != NULL 인 경우는 frame 이 여전히 이 page 에
+     * 매핑되어 있는 상태(즉 frame_table 에도 들어 있는 상태) 뿐이다.
+     * frame_table list_elem 을 먼저 빼고 struct frame 만 free —
+     * frame->kva(user page) 자체는 pml4_destroy 가 회수한다. */
     if (page->frame != NULL) {
+        lock_acquire(&frame_table_lock);
+        list_remove(&page->frame->frame_elem);
+        lock_release(&frame_table_lock);
         free(page->frame);
         page->frame = NULL;
     }
@@ -175,7 +183,16 @@ static struct frame *
 vm_evict_frame (void) {
 	struct frame *victim UNUSED = vm_get_victim ();
 	/* TODO: swap out the victim and return the evicted frame. */
-	swap_out(victim->page);
+	struct page *victim_page = victim->page;
+	swap_out(victim_page);
+	/* 재할당 페이지가 이전 사용자의 잔여 데이터를 보지 않도록 zero-fill —
+	 * page-merge-par 의 child-sort 가 garbage 데이터로 path 검증을 그르치는
+	 * 경로를 막는다. */
+	memset(victim->kva, 0, PGSIZE);
+	/* swap_out 이후 victim_page 는 더 이상 이 frame 을 소유하지 않는다.
+	 * back-pointer 를 끊지 않으면 victim_page->frame 이 dangling 으로 남아
+	 * page_destructor 단계에서 다른 page 가 소유한 frame 을 free 하게 된다. */
+	victim_page->frame = NULL;
 	return victim;
 }
 
@@ -195,7 +212,7 @@ vm_get_frame (void) {
 	*/
 	struct frame *frame = malloc(sizeof(struct frame));
 	frame->kva = palloc_get_page(PAL_USER);
-	
+
 	if (frame->kva == NULL){
     	free(frame);
 		struct frame *evict_frame = vm_evict_frame();
@@ -341,10 +358,18 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 			switch (VM_TYPE(src_page->operations->type)) {
 				case VM_UNINIT: {
 					struct uninit_page *uninit = &src_page->uninit;
-					struct lazy_load_aux *new_aux = malloc(sizeof(struct lazy_load_aux));
+					struct lazy_load_aux *new_aux = NULL;
 					if (uninit->aux != NULL) {
 						new_aux = malloc(sizeof(struct lazy_load_aux));
+						if (new_aux == NULL)
+							return false;
 						memcpy(new_aux, uninit->aux, sizeof(struct lazy_load_aux));
+						/* 자식의 모든 UNINIT 페이지가 child->running_file 을
+						 * 공유 — __do_fork 가 미리 file_duplicate 로 만들어 둠.
+						 * owns_file=false 이므로 lazy_load / uninit_destroy 가
+						 * file_close 하지 않고 process_cleanup 에서 한 번 회수. */
+						new_aux->file = thread_current()->running_file;
+						new_aux->owns_file = false;
 					}
 					vm_alloc_page_with_initializer(
 						uninit->type,        // type
@@ -356,12 +381,21 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 					break;
 				}
 				case VM_ANON: {
-					vm_alloc_page(src_page->operations->type, 
-							      src_page->va, 
-								  src_page->writable);
-					vm_claim_page(src_page->va);
+					if (!vm_alloc_page(src_page->operations->type,
+							      src_page->va,
+								  src_page->writable))
+						return false;
+					if (!vm_claim_page(src_page->va))
+						return false;
 					struct page *dst_page = spt_find_page(dst, src_page->va);
-					memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
+					/* src 가 evict 된 상태라면 src_page->frame 은 NULL.
+					 * 부모의 swap_slot 에서 dst 의 frame 으로 직접 읽는다
+					 * (부모 슬롯은 그대로 둬서 부모 쪽 매핑은 유효 유지). */
+					if (src_page->frame == NULL) {
+						anon_clone_from_swap(src_page, dst_page->frame->kva);
+					} else {
+						memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
+					}
 					break;
 				}
 				case VM_FILE:{

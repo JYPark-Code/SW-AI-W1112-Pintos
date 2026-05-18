@@ -10,6 +10,9 @@
 
 #include "vm/vm.h"
 #include "vm/uninit.h"
+#include "threads/malloc.h"
+#include "filesys/file.h"
+#include "userprog/process.h"
 
 static bool uninit_initialize (struct page *page, void *kva);
 static void uninit_destroy (struct page *page);
@@ -62,7 +65,16 @@ uninit_initialize (struct page *page, void *kva) {
  * PAGE will be freed by the caller. */
 static void
 uninit_destroy (struct page *page) {
-	struct uninit_page *uninit UNUSED = &page->uninit;
 	/* TODO: Fill this function.
 	 * TODO: If you don't have anything to do, just return. */
+	struct uninit_page *uninit = &page->uninit;
+    if (uninit->aux != NULL) {
+        /* owns_file=true (fork 자식의 duplicate) 일 때만 file_close —
+         * owns_file=false (부모의 running_file 공유) 는 process_cleanup 에서
+         * 한 번에 회수해야 다중 close UAF 를 피할 수 있다. */
+        struct lazy_load_aux *info = uninit->aux;
+        if (info->owns_file && info->file != NULL)
+            file_close(info->file);
+        free(uninit->aux);
+    }
 }
