@@ -1,6 +1,6 @@
 # Pintos Project 3 — swap baseline 위에서 page-merge-par/stk 잡기 (fork+exec leak audit)
 
-> [cleanup_audit](./project3_cleanup_audit_til.md) 로 multi-oom 의 leak 0 을
+> [cleanup_audit](./05_project3_cleanup_audit_til.md) 로 multi-oom 의 leak 0 을
 > 만들어 두고, [swap in/out](https://github.com/JYPark-Code/SW-AI-W1112-Pintos/commit/aa355a6) 으로 page-merge-seq 까지 통과한 다음의 다음 산은
 > **fork + exec 가 강하게 얽히는 page-merge-par / page-merge-stk** 였다.
 > 두 테스트의 증상은 정반대처럼 보였다:
@@ -65,7 +65,7 @@ malloc(lazy_load_aux) 의 zero_bytes 위치가 dangling pointer 로 덮임).
 
 ## 1. 왜 swap 이 통과한 다음에야 이게 터졌나
 
-swap 직전의 baseline ([cleanup_audit](./project3_cleanup_audit_til.md)) 이
+swap 직전의 baseline ([cleanup_audit](./05_project3_cleanup_audit_til.md)) 이
 `multi-oom` 까지 통과시켰고, swap 구현
 ([`aa355a6`](https://github.com/JYPark-Code/SW-AI-W1112-Pintos/commit/aa355a6)) 으로
 `page-merge-seq` 까지 갔는데, `page-merge-par/stk` 가 못 넘어갔다.
@@ -555,6 +555,6 @@ struct 를 침범* 하는 새 문제를 만든다. 락 범위를 결정할 때:
 
 ---
 
-[← cleanup_audit (multi-oom)](./project3_cleanup_audit_til.md) ·
-[← spt copy/fork](./project3_vm_spt_copy_fork_til.md) ·
-[← lazy loading](./project3_vm_spt_lazy_loading_til.md)
+[← cleanup_audit (multi-oom)](./05_project3_cleanup_audit_til.md) ·
+[← spt copy/fork](./03_project3_vm_spt_copy_fork_til.md) ·
+[← lazy loading](./01_project3_vm_spt_lazy_loading_til.md)
