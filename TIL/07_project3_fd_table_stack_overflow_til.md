@@ -15,20 +15,23 @@
 
 ```mermaid
 flowchart TB
-    A[multi-recurse FAIL 이 새로 보고됨]:::a --> B[panic = is_thread<br/>load 안 printf chain]
-    B --> C[exec-missing / wait-killed 도<br/>같은 panic 패턴]:::b
-    C --> D{aa355a6 binary search}
-    D --> E[multi-recurse 는 8f2954f 발 회귀<br/>exec-missing / wait-killed 는 pre-existing]:::c
-    E --> F[가설: kernel stack 한계선]
-    F --> G[fd_table 128 → 16 실험]:::a
-    G --> H[3종 + page-merge-*<br/>모두 PASS — confirmed]:::d
-    H --> I[영구 수정:<br/>fd_table 힙 분리<br/>+ initd / __do_fork calloc<br/>+ process_cleanup free]:::e
-    I --> J[회귀 3종 + sanity 12종<br/>+ multi-oom PASS]:::d
-    classDef a fill:#ffe9c4,color:#000
-    classDef b fill:#ffd0d0,color:#000
-    classDef c fill:#fff2b0,color:#000
-    classDef d fill:#d4f4dd,color:#000
-    classDef e fill:#d4e8ff,color:#000
+    A["multi-recurse<br/>회귀 보고"]:::warn
+    A --> B["셋이 같은 panic<br/>is_thread @ load()"]:::warn
+    B --> C{"aa355a6<br/>binary search"}
+    C --> D["multi-recurse<br/>= 8f2954f 발 회귀"]:::note
+    C --> E["exec-missing /<br/>wait-killed<br/>= pre-existing"]:::note
+    D --> F["가설<br/>kernel stack 한계선"]:::idea
+    E --> F
+    F --> G["fd_table 128 → 16<br/>한 줄 실험"]:::test
+    G --> H["3종 + sanity<br/>모두 PASS<br/>(가설 confirmed)"]:::ok
+    H --> I["영구 수정<br/>fd_table 힙 분리"]:::fix
+    I --> J["19종 PASS<br/>회귀 0"]:::ok
+    classDef warn fill:#ffd0d0,color:#000
+    classDef note fill:#fff2b0,color:#000
+    classDef idea fill:#ffe9c4,color:#000
+    classDef test fill:#ffe9c4,color:#000
+    classDef ok fill:#d4f4dd,color:#000
+    classDef fix fill:#d4e8ff,color:#000
 ```
 
 | 절 | 내용 | 핵심 |
