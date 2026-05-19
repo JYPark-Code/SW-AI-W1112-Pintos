@@ -147,6 +147,11 @@ initd (void *f_name) {
 
 	process_init ();
 	thread_current()->parent = NULL;  /* initd는 부모가 없음 */
+	/* fd_table 힙 할당 — thread struct 에 박지 않고 분리해
+	 * 커널 스택 여유를 확보 (자세한 사유는 thread.h 의 fd_table 주석). */
+	thread_current()->fd_table = calloc(128, sizeof(struct file *));
+	if (thread_current()->fd_table == NULL)
+		PANIC("initd: fd_table calloc failed");
 	if (process_exec(f_name) < 0)
     	PANIC("Fail to launch initd\n");
 	NOT_REACHED ();
@@ -316,6 +321,12 @@ __do_fork (void *aux) {
 	if (!pml4_for_each (parent->pml4, duplicate_pte, parent))
 		goto error;
 #endif
+
+	/* 자식 fd_table 힙 할당 — initd 와 동일하게 thread struct 밖에 둠.
+	 * 실패 시 error 라벨로 점프해 부분 복제 상태 회수. */
+	current->fd_table = calloc(128, sizeof(struct file *));
+	if (current->fd_table == NULL)
+		goto error;
 
 	/* 부모의 fd_table을 자식에 복사.
 	 * 주의: 단순 포인터 복사로 끝내면 부모/자식이 같은 file* 객체를 공유해
@@ -564,13 +575,19 @@ process_cleanup (void) {
 	 /* 열린 fd 전부 닫는다. process_exit 으로 진입한 모든 경로 — 정상 종료,
 	  * exec 실패 후 thread_exit, fork 중간 실패, kill(-1) 등 — 가 여기로
 	  * 모이므로 fd 누수의 단일 회수 지점이다. multi-oom 의 depth-decrease
-	  * 회귀가 거의 이 누수에서 옴. */
-	 for (int fd = 2; fd < 128; fd++) {
-        if (curr->fd_table[fd] != NULL) {
-            file_close(curr->fd_table[fd]);
-            curr->fd_table[fd] = NULL;
-        }
-    }
+	  * 회귀가 거의 이 누수에서 옴.
+	  * fd_table 자체는 힙(initd/__do_fork 의 calloc) — kernel-only thread 는
+	  * NULL 이므로 그 경로에서도 안전. 회수 후 NULL 화. */
+	 if (curr->fd_table != NULL) {
+		for (int fd = 2; fd < 128; fd++) {
+			if (curr->fd_table[fd] != NULL) {
+				file_close(curr->fd_table[fd]);
+				curr->fd_table[fd] = NULL;
+			}
+		}
+		free(curr->fd_table);
+		curr->fd_table = NULL;
+	 }
 
 	 /* SPT 가 먼저 죽은 뒤 닫는다 — lazy load aux 가 이 file 을 참조하므로
 	  * SPT 파괴 전에 닫으면 destroy 콜백 안에서 UAF. file_close 가

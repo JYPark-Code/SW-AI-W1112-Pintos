@@ -102,7 +102,14 @@ struct thread {
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;             /* ready_list, sleep_list용 */
 	/* fd 테이블 */
-	struct file *fd_table[128];
+	/* fd_table 을 thread struct 안에 [128] 로 박으면 1024B 를 먹어
+	 * 커널 스택 여유가 ~2.5KB 로 줄고, exec 의 깊은 호출 체인
+	 * (process_exec → SPT_kill → load → filesys_open → ... → printf)
+	 * 이 magic 을 덮어 is_thread panic 을 일으킴 (exec-missing /
+	 * wait-killed / multi-recurse 회귀). 그래서 힙으로 빼서
+	 * (initd / __do_fork 에서 calloc, process_cleanup 에서 free)
+	 * 1024B 의 스택 여유를 회수한다. NULL 인 kernel-only thread 도 안전. */
+	struct file **fd_table;
 	int fd_next;   /* 다음 할당할 fd 번호, 2로 초기화 */
 	bool wait_called; /* 부모가 wait()를 호출했는지 여부 */
 
