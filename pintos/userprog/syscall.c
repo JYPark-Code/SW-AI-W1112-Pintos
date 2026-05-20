@@ -14,10 +14,9 @@
 #include "filesys/file.h"
 #include "devices/input.h"	/* input_getc() — SYS_READ stdin 분기에서 사용 */
 #include "threads/palloc.h" /* SYS_EXEC 에서 palloc_get_page() 인자로 넣을 떄 PAL_ZERO 필요*/
+#include "userprog/process.h"
+#include "lib/string.h"
 #include "vm/vm.h"
-
-// 주소가 writable한지 확인하는 헬퍼 함수
-static void is_writable_user_addr(const void *uaddr);
 
 /* 파일 시스템 락 선언 */
 struct lock filesys_lock;
@@ -58,8 +57,6 @@ void syscall_init(void)
 	 * mode stack. Therefore, we masked the FLAG_FL. */
 	write_msr(MSR_SYSCALL_MASK,
 			  FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
-
-	lock_init(&filesys_lock);
 }
 
 /* stage 0 최소 메모리 검증.
@@ -67,47 +64,13 @@ void syscall_init(void)
  *   - is_user_vaddr(p)는 ((uint64_t)p < KERN_BASE)와 동치 →
  *     커널 영역 포인터를 유저가 넘긴 경우 차단
  * 언맵된 페이지/페이지 경계 걸침 등 정식 검증은 이후 단계에서 추가. */
-static void validate_user_addr(const void *uaddr)
+static void
+validate_user_addr(const void *uaddr)
 {
-	if (uaddr == NULL || !is_user_vaddr(uaddr))
+	if (uaddr == NULL || !is_user_vaddr(uaddr) || pml4_get_page(thread_current()->pml4, uaddr) == NULL)
 	{
 		thread_current()->exit_status = -1;
 		thread_exit();
-	}
-#ifndef VM
-	if (pml4_get_page(thread_current()->pml4, uaddr) == NULL)
-	{
-		thread_current()->exit_status = -1;
-		thread_exit();
-	}
-#endif
-}
-
-static void is_writable_user_addr(const void *uaddr)
-{
-	struct page *page = spt_find_page(&thread_current()->spt, uaddr);
-	// CASE 1 : 페이지가 존재함
-	if (page != NULL)
-	{
-		// 쓰기 불가능이면 종료
-		if (page->writable == false)
-		{
-			thread_current()->exit_status = -1;
-			thread_exit();
-		}
-	}
-	// CASE 2 : 페이지가 존재하지 않음
-	else
-	{
-		uintptr_t user_rsp = thread_current()->user_rsp;
-		void *stack_limit = (void *)(USER_STACK - (1 << 20));
-
-		// 만약 스택 growth가 불가능한 영역이면 종료
-		if ((uaddr >= (void *)(user_rsp - 8) && uaddr >= stack_limit) == false)
-		{
-			thread_current()->exit_status = -1;
-			thread_exit();
-		}
 	}
 }
 
@@ -117,10 +80,7 @@ static void is_writable_user_addr(const void *uaddr)
  * intr_frame->R 의 동명 필드에 그대로 들어 있다. */
 void syscall_handler(struct intr_frame *f UNUSED)
 {
-	// 현재 스레드의 유저 스택 포인터를, thread 구조체의 user_rsp에 저장
-	thread_current()->user_rsp = f->rsp;
 	uint64_t sysno = f->R.rax;
-
 	switch (sysno)
 	{
 	/* 파일 관련 */
@@ -220,14 +180,73 @@ void syscall_handler(struct intr_frame *f UNUSED)
 	case SYS_READ:
 	{
 		int fd = (int)f->R.rdi;
-		const void *buffer = (const void *)f->R.rsi;
+		void *buffer = (void *)f->R.rsi;
 		unsigned size = (unsigned)f->R.rdx;
 
-		// 1. 유효한 주소인지 검사
-		// 2. write 가능한지 검사
-		validate_user_addr(buffer);
-		is_writable_user_addr(buffer);
+		/* SYS_READ는 stack growth가 필요한 buffer도 받을 수 있으므로,
+		 * 아직 mapping이 없는지만으로 바로 거절하지 않는다. */
+		if (buffer == NULL || !is_user_vaddr(buffer))
+		{
+			thread_current()->exit_status = -1;
+			thread_exit();
+		}
+		// struct page *page;
+		// page = spt_find_page(&thread_current()->spt, buffer);
+		// if(page == NULL){
+		// 	 thread_current()->exit_status = -1;
+		// 	 thread_exit();
+		// }
+		// if(page->writable == false){
+		// 	 thread_current()->exit_status = -1;
+		// 	 thread_exit();
+		// }
+		uint8_t *start = buffer;
+		uint8_t *end = start + size;
+		uint8_t *cur = start;
 
+		while (cur < end)
+		{
+			void *page_va;
+			struct page *page;
+			page_va = pg_round_down(cur);
+			page = spt_find_page(&thread_current()->spt, page_va);
+
+			if (page == NULL)
+			{
+				if ((uintptr_t)page_va < (uintptr_t)USER_STACK &&
+					(uintptr_t)page_va >= ((uintptr_t)USER_STACK - (1024 * 1024)) &&
+					(uintptr_t)cur >= ((uintptr_t)f->rsp - 8))
+				{
+					bool alloc_success;
+					bool claim_success;
+
+					alloc_success = vm_alloc_page(VM_ANON, page_va, true);
+					if (alloc_success == false){
+						thread_current()->exit_status = -1;
+						thread_exit();
+					}
+					claim_success = vm_claim_page(page_va);
+					if (claim_success == false){
+						thread_current()->exit_status = -1;
+						thread_exit();
+					}
+					page = spt_find_page(&thread_current()->spt, page_va);
+					if (page == NULL){
+						thread_current()->exit_status = -1;
+						thread_exit();
+					}
+				}
+				else{
+					thread_current()->exit_status = -1;
+					thread_exit();
+				}
+			}
+			if (page->writable == false){
+				thread_current()->exit_status = -1;
+				thread_exit();
+			}
+			cur = (uint8_t *)page_va + PGSIZE;
+		}
 		lock_acquire(&filesys_lock);
 
 		if (fd < 0 || fd >= 128)
@@ -270,169 +289,142 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		break;
 	}
 
-	case SYS_WRITE:
+case SYS_WRITE:
+{
+	int fd = (int)f->R.rdi;
+	const void *buffer = (const void *)f->R.rsi;
+	unsigned size = (unsigned)f->R.rdx;
+
+	/* stage 0: KERN_BASE 체크만 (요구사항대로 최소화) */
+	validate_user_addr(buffer);
+
+	lock_acquire(&filesys_lock);
+
+	if (fd < 0 || fd >= 128)
 	{
-		int fd = (int)f->R.rdi;
-		const void *buffer = (const void *)f->R.rsi;
-		unsigned size = (unsigned)f->R.rdx;
-
-		/* stage 0: KERN_BASE 체크만 (요구사항대로 최소화) */
-		validate_user_addr(buffer);
-
-		lock_acquire(&filesys_lock);
-
-		if (fd < 0 || fd >= 128)
-		{
-			f->R.rax = -1;
-			lock_release(&filesys_lock);
-			break;
-		}
-		else if (fd == 0)
-		{
-			f->R.rax = -1;
-			lock_release(&filesys_lock);
-			break;
-		}
-		else if (fd == 1)
-		{
-			/* fd=1 (stdout): putbuf로 콘솔 출력.
-			 *   - putbuf는 내부 console lock으로 한 호출분을 보호하여
-			 *     다른 출력과 섞이지 않는다.
-			 *   - 유저 모드 printf()의 최종 종착지가 바로 이 분기.
-			 *     이게 없으면 유저 프로그램의 모든 출력이 사라진다. */
-			putbuf(buffer, size);
-			f->R.rax = size; /* 쓴 바이트 수 반환 (stdout은 size 그대로) */
-			lock_release(&filesys_lock);
-		}
-		else if (fd >= 2)
-		{
-			struct file *file = thread_current()->fd_table[fd];
-			if (file == NULL)
-			{
-				lock_release(&filesys_lock);
-				break;
-			}
-			f->R.rax = file_write(file, buffer, size);
-			lock_release(&filesys_lock);
-		}
+		f->R.rax = -1;
+		lock_release(&filesys_lock);
 		break;
 	}
-
-	case SYS_FILESIZE:
+	else if (fd == 0)
 	{
-		int fd = (int)f->R.rdi;
-
-		lock_acquire(&filesys_lock);
-
-		/* fd_table[fd] 직전 범위 가드 — 음수/오버플로 fd로 인한 OOB 차단 */
-		if (fd < 2 || fd >= 128)
-		{
-			f->R.rax = -1;
-			lock_release(&filesys_lock);
-			break;
-		}
-
+		f->R.rax = -1;
+		lock_release(&filesys_lock);
+		break;
+	}
+	else if (fd == 1)
+	{
+		/* fd=1 (stdout): putbuf로 콘솔 출력.
+		 *   - putbuf는 내부 console lock으로 한 호출분을 보호하여
+		 *     다른 출력과 섞이지 않는다.
+		 *   - 유저 모드 printf()의 최종 종착지가 바로 이 분기.
+		 *     이게 없으면 유저 프로그램의 모든 출력이 사라진다. */
+		putbuf(buffer, size);
+		f->R.rax = size; /* 쓴 바이트 수 반환 (stdout은 size 그대로) */
+		lock_release(&filesys_lock);
+	}
+	else if (fd >= 2)
+	{
 		struct file *file = thread_current()->fd_table[fd];
 		if (file == NULL)
 		{
-			f->R.rax = -1;
 			lock_release(&filesys_lock);
 			break;
 		}
+		f->R.rax = file_write(file, buffer, size);
+		lock_release(&filesys_lock);
+	}
+	break;
+}
 
-		f->R.rax = file_length(file);
+case SYS_FILESIZE:
+{
+	int fd = (int)f->R.rdi;
+
+	lock_acquire(&filesys_lock);
+
+	/* fd_table[fd] 직전 범위 가드 — 음수/오버플로 fd로 인한 OOB 차단 */
+	if (fd < 2 || fd >= 128)
+	{
+		f->R.rax = -1;
 		lock_release(&filesys_lock);
 		break;
 	}
 
-	/* 프로세스 관련 */
-	case SYS_EXEC:
+	struct file *file = thread_current()->fd_table[fd];
+	if (file == NULL)
 	{
-		/* 유저가 넘긴 파일명 포인터 검증 */
-		const char *filename = (const void *)f->R.rdi;
-		validate_user_addr(filename);
-
-		/* process_exec는 palloc으로 할당된 메모리를 기대하므로
-		 * 유저 스택의 filename을 그대로 넘기면 안 됨
-		 * 새 페이지에 복사해서 넘김 */
-		char *fn_copy = palloc_get_page(PAL_ZERO);
-		strlcpy(fn_copy, filename, PGSIZE);
-
-		/* 성공하면 돌아오지 않음 (do_iret으로 유저 모드 전환)
-		 * 실패하면 -1 반환 */
-		int result = process_exec(fn_copy);
-		thread_current()->exit_status = -1;
-		thread_exit();
-		NOT_REACHED();
-	}
-
-	case SYS_FORK:
-	{
-		const char *name = (const void *)f->R.rdi; /* 자식 이름 */
-		tid_t tid = process_fork(name, f);		   /* f가 곧 if_ */
-		sema_down(&thread_current()->fork_sema);
-		f->R.rax = tid;
-
+		f->R.rax = -1;
+		lock_release(&filesys_lock);
 		break;
 	}
 
-	case SYS_WAIT:
-	{
-		tid_t pid = (tid_t)f->R.rdi;
-		f->R.rax = process_wait(pid);
-		break;
-	}
+	f->R.rax = file_length(file);
+	lock_release(&filesys_lock);
+	break;
+}
 
-	case SYS_HALT:
-		/* 머신을 즉시 종료한다.
-		 * power_off()는 QEMU/Bochs에 shutdown 신호를 보내며 NO_RETURN이다. */
-		power_off();
-		NOT_REACHED();
+/* 프로세스 관련 */
+case SYS_EXEC:
+{
+	/* 유저가 넘긴 파일명 포인터 검증 */
+	const char *filename = (const void *)f->R.rdi;
+	validate_user_addr(filename);
 
-	case SYS_EXIT:
-	{
-		/* rdi에 담긴 종료 코드를 thread 구조체에 저장한 뒤 종료한다.
-		 * exit_status는 process_wait()가 회수할 때 쓰이며,
-		 * process_exit()의 종료 메시지 출력에도 사용된다.
-		 * thread_exit()가 process_exit()를 호출하므로 별도 호출 불필요. */
-		int status = (int)f->R.rdi;
-		thread_current()->exit_status = status;
-		thread_exit();
-		NOT_REACHED();
-	}
+	/* process_exec는 palloc으로 할당된 메모리를 기대하므로
+	 * 유저 스택의 filename을 그대로 넘기면 안 됨
+	 * 새 페이지에 복사해서 넘김 */
+	char *fn_copy = palloc_get_page(PAL_ZERO);
+	strlcpy(fn_copy, filename, PGSIZE);
 
-	case SYS_MMAP:
-	{
-		void *addr = (void *)f->R.rdi;
-		size_t length = f->R.rsi;
-		int writable = (int)f->R.rdx;
-		int fd = (int)f->R.rcx;
-		off_t offset = (off_t)f->R.r8;
+	/* 성공하면 돌아오지 않음 (do_iret으로 유저 모드 전환)
+	 * 실패하면 -1 반환 */
+	process_exec(fn_copy);
+	thread_current()->exit_status = -1;
+	thread_exit();
+	NOT_REACHED();
+}
 
-		// fd 검사
-		if (fd < 2 || fd >= 128)
-		{
-			f->R.rax = NULL;
-			break;
-		}
+case SYS_FORK:
+{
+	const char *name = (const void *)f->R.rdi; /* 자식 이름 */
+	tid_t tid = process_fork(name, f);		   /* f가 곧 if_ */
+	sema_down(&thread_current()->fork_sema);
+	f->R.rax = tid;
 
-		// 현재 스레드의 fd_table에서 fd가 가리키고 있는 file이 있는지 검사
-		struct file *file = thread_current()->fd_table[fd];
-		if (file == NULL)
-		{
-			f->R.rax = NULL;
-			break;
-		}
+	break;
+}
 
-		f->R.rax = (uint64_t)do_mmap(addr, length, writable, file, offset);
-		break;
-	}
+case SYS_WAIT:
+{
+	tid_t pid = (tid_t)f->R.rdi;
+	f->R.rax = process_wait(pid);
+	break;
+}
 
-	default:
-		/* 아직 라우팅 안 된 시스템 콜.
-		 * 디버깅 가시성을 위해 한 줄 찍고 종료. */
-		printf("[stage0] unhandled syscall: %llu\n",
-			   (unsigned long long)sysno);
-		thread_exit();
-	}
+case SYS_HALT:
+	/* 머신을 즉시 종료한다.
+	 * power_off()는 QEMU/Bochs에 shutdown 신호를 보내며 NO_RETURN이다. */
+	power_off();
+	NOT_REACHED();
+
+case SYS_EXIT:
+{
+	/* rdi에 담긴 종료 코드를 thread 구조체에 저장한 뒤 종료한다.
+	 * exit_status는 process_wait()가 회수할 때 쓰이며,
+	 * process_exit()의 종료 메시지 출력에도 사용된다.
+	 * thread_exit()가 process_exit()를 호출하므로 별도 호출 불필요. */
+	int status = (int)f->R.rdi;
+	thread_current()->exit_status = status;
+	thread_exit();
+	NOT_REACHED();
+}
+
+default:
+	/* 아직 라우팅 안 된 시스템 콜.
+	 * 디버깅 가시성을 위해 한 줄 찍고 종료. */
+	printf("[stage0] unhandled syscall: %llu\n",
+		   (unsigned long long)sysno);
+	thread_exit();
+}
 }
