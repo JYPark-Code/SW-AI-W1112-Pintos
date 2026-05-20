@@ -2,12 +2,16 @@
 
 #include "vm/vm.h"
 #include "devices/disk.h"
+#include "threads/malloc.h"
+#include "threads/palloc.h"
+#include "threads/mmu.h"
+#include "threads/thread.h"
 
 /* DO NOT MODIFY BELOW LINE */
 static struct disk *swap_disk;
-static bool anon_swap_in(struct page *page, void *kva);
-static bool anon_swap_out(struct page *page);
-static void anon_destroy(struct page *page);
+static bool anon_swap_in (struct page *page, void *kva);
+static bool anon_swap_out (struct page *page);
+static void anon_destroy (struct page *page);
 
 /* DO NOT MODIFY this struct */
 static const struct page_operations anon_ops = {
@@ -18,41 +22,47 @@ static const struct page_operations anon_ops = {
 };
 
 /* Initialize the data for anonymous pages */
-void vm_anon_init(void)
-{
+void
+vm_anon_init (void) {
 	/* TODO: Set up the swap_disk. */
 	swap_disk = NULL;
 }
 
 /* Initialize the file mapping */
-bool anon_initializer(struct page *page, enum vm_type type, void *kva)
-{
+bool
+anon_initializer (struct page *page, enum vm_type type UNUSED, void *kva UNUSED) {
 	/* Set up the handler */
+	/* anonymous page가 사용할 동작 함수 묶음을 연결 */
 	page->operations = &anon_ops;
 
-	struct anon_page *anon_page = &page->anon;
+	/* anonymous page 전용 데이터 영역을 가리킴. 현재는 추가 초기화가 없다. */
+	struct anon_page *anon_page UNUSED = &page->anon;
+
+	/* anonymous page 초기화가 성공했음을 알림 */
 	return true;
 }
 
 /* Swap in the page by read contents from the swap disk. */
 static bool
-anon_swap_in(struct page *page, void *kva)
-{
-	struct anon_page *anon_page = &page->anon;
+anon_swap_in (struct page *page UNUSED, void *kva UNUSED) {
 	return true;
 }
 
 /* Swap out the page by writing contents to the swap disk. */
 static bool
-anon_swap_out(struct page *page)
-{
-	struct anon_page *anon_page = &page->anon;
-	return true;
+anon_swap_out (struct page *page UNUSED) {
+	return false;
 }
 
 /* Destroy the anonymous page. PAGE will be freed by the caller. */
 static void
-anon_destroy(struct page *page)
-{
-	struct anon_page *anon_page = &page->anon;
+anon_destroy (struct page *page) {
+	struct anon_page *anon_page UNUSED = &page->anon;
+
+	if (page->frame != NULL) {
+		pml4_clear_page (thread_current ()->pml4, page->va);
+		palloc_free_page (page->frame->kva);
+		free (page->frame);
+		page->frame = NULL;
+	}
 }
