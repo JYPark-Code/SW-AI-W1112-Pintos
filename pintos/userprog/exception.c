@@ -19,8 +19,8 @@ static void page_fault (struct intr_frame *);
    passed along to the user process in the form of signals, as
    described in [SV-386] 3-24 and 3-25, but we don't implement
    signals.  Instead, we'll make them simply kill the user
+   
    process.
-
    Page faults are an exception.  Here they are treated the same
    way as other exceptions, but this will need to change to
    implement virtual memory.
@@ -83,9 +83,10 @@ kill (struct intr_frame *f) {
 		case SEL_UCSEG:
 			/* User's code segment, so it's a user exception, as we
 			   expected.  Kill the user process.  */
-			printf ("%s: dying due to interrupt %#04llx (%s).\n",
-					thread_name (), f->vec_no, intr_name (f->vec_no));
-			intr_dump_frame (f);
+			// printf ("%s: dying due to interrupt %#04llx (%s).\n",
+			// 		thread_name (), f->vec_no, intr_name (f->vec_no));
+			// intr_dump_frame (f);
+			thread_current()->exit_status = -1;
 			thread_exit ();
 
 		case SEL_KCSEG:
