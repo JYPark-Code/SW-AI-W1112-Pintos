@@ -40,13 +40,9 @@ struct thread;
 /* lazy_load_segment()가 나중에 파일을 읽을 때 필요한 정보를 담는 구조체 */
 struct lazy_load_arg
 {
-	/* 나중에 읽을 실행 파일 */
 	struct file *file;
-	/* 파일에서 읽기 시작할 위치 */
 	off_t ofs;
-	/* 파일에서 실제로 읽어야 하는 byte 수 */
 	size_t read_bytes;
-	/* 파일에서 읽은 뒤 0으로 채워야 하는 byte 수 */
 	size_t zero_bytes;
 };
 
@@ -60,10 +56,8 @@ struct page {
 	struct frame *frame;   /* Back reference for frame */
 
 	/* Your implementation */
-	// SPT hash table에 들어가기 위한 연결 고리
 	struct hash_elem hash_elem;
 
-	// page fault에서 write 가능한 page인 판단하기 위해 필요
 	bool writable;
 
 	/* Per-type data are binded into the union.
