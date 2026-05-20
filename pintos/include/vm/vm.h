@@ -37,6 +37,19 @@ struct thread;
 
 #define VM_TYPE(type) ((type) & 7)
 
+/* lazy_load_segment()가 나중에 파일을 읽을 때 필요한 정보를 담는 구조체 */
+struct lazy_load_arg
+{
+	/* 나중에 읽을 실행 파일 */
+	struct file *file;
+	/* 파일에서 읽기 시작할 위치 */
+	off_t ofs;
+	/* 파일에서 실제로 읽어야 하는 byte 수 */
+	size_t read_bytes;
+	/* 파일에서 읽은 뒤 0으로 채워야 하는 byte 수 */
+	size_t zero_bytes;
+};
+
 /* The representation of "page".
  * This is kind of "parent class", which has four "child class"es, which are
  * uninit_page, file_page, anon_page, and page cache (project4).

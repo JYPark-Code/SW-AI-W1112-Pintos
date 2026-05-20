@@ -2,6 +2,10 @@
 
 #include "vm/vm.h"
 #include "devices/disk.h"
+#include "threads/malloc.h"
+#include "threads/palloc.h"
+#include "threads/mmu.h"
+#include "threads/thread.h"
 
 /* DO NOT MODIFY BELOW LINE */
 static struct disk *swap_disk;
@@ -42,16 +46,24 @@ anon_initializer (struct page *page, enum vm_type type UNUSED, void *kva UNUSED)
 static bool
 anon_swap_in (struct page *page, void *kva) {
 	struct anon_page *anon_page = &page->anon;
+	return true;
 }
 
 /* Swap out the page by writing contents to the swap disk. */
 static bool
-anon_swap_out (struct page *page) {
-	struct anon_page *anon_page = &page->anon;
+anon_swap_out (struct page *page UNUSED) {
+	return false;
 }
 
 /* Destroy the anonymous page. PAGE will be freed by the caller. */
 static void
 anon_destroy (struct page *page) {
-	struct anon_page *anon_page = &page->anon;
+	struct anon_page *anon_page UNUSED = &page->anon;
+
+	if (page->frame != NULL) {
+		pml4_clear_page (thread_current ()->pml4, page->va);
+		palloc_free_page (page->frame->kva);
+		free (page->frame);
+		page->frame = NULL;
+	}
 }

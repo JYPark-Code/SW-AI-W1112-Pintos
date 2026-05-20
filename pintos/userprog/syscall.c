@@ -15,6 +15,10 @@
 #include "devices/input.h"      /* input_getc() — SYS_READ stdin 분기에서 사용 */
 #include "threads/palloc.h" 	/* SYS_EXEC 에서 palloc_get_page() 인자로 넣을 떄 PAL_ZERO 필요*/
 
+#ifdef VM
+#include "vm/vm.h"
+#endif
+
 /* 파일 시스템 락 선언 */
 struct lock filesys_lock;
 
@@ -72,12 +76,80 @@ validate_user_addr (const void *uaddr) {
     }
 }
 
+static void
+validate_writable_addr (void *uaddr)
+{
+	validate_user_addr (uaddr);
+
+#ifdef VM
+	struct page *page = spt_find_page (&thread_current ()->spt, uaddr);
+
+	if (page == NULL || !page->writable)
+	{
+		thread_current ()->exit_status = -1;
+		thread_exit ();
+	}
+#endif
+}
+
+static void
+validate_user_buffer (struct intr_frame *f, void *buffer,
+		unsigned size, bool writable) {
+	if (size == 0)
+		return;
+
+	if (buffer == NULL)
+	{
+		thread_current ()->exit_status = -1;
+		thread_exit ();
+	}
+
+	uint64_t start = (uint64_t) buffer;
+	uint64_t end = start + size - 1;
+
+	if (end < start || !is_user_vaddr ((void *) start)
+			|| !is_user_vaddr ((void *) end))
+	{
+		thread_current ()->exit_status = -1;
+		thread_exit ();
+	}
+
+	for (uint64_t addr = (uint64_t) pg_round_down ((void *) start);
+			addr <= end;
+			addr += PGSIZE) {
+		void *check_addr = (void *) (addr < start ? start : addr);
+
+#ifdef VM
+		if (pml4_get_page (thread_current ()->pml4, check_addr) == NULL) {
+			if (!vm_try_handle_fault (f, check_addr, true, writable, true))
+			{
+				thread_current ()->exit_status = -1;
+				thread_exit ();
+			}
+		}
+
+		struct page *page = spt_find_page (&thread_current ()->spt, check_addr);
+		if (writable && page != NULL && !page->writable)
+		{
+			thread_current ()->exit_status = -1;
+			thread_exit ();
+		}
+#else
+		if (pml4_get_page (thread_current ()->pml4, check_addr) == NULL)
+		{
+			thread_current ()->exit_status = -1;
+			thread_exit ();
+		}
+#endif
+	}
+}
+
 /* x86-64 syscall ABI (KAIST 기준)
  *   rax       = syscall 번호 / 반환값
  *   rdi, rsi, rdx, r10, r8, r9 = 인자 1~6
  * intr_frame->R 의 동명 필드에 그대로 들어 있다. */
 void
-syscall_handler (struct intr_frame *f UNUSED) {
+syscall_handler (struct intr_frame *f) {
 	uint64_t sysno = f->R.rax;
 
 	switch (sysno) {
@@ -167,11 +239,11 @@ syscall_handler (struct intr_frame *f UNUSED) {
 
 		case SYS_READ: {
 			int            fd     = (int) f->R.rdi;
-			const void    *buffer = (const void *) f->R.rsi;
+			void *buffer = (void *) f->R.rsi;
 			unsigned       size   = (unsigned) f->R.rdx;
 
 			/* stage 0: KERN_BASE 체크만 (요구사항대로 최소화) */
-			validate_user_addr(buffer);
+			validate_user_buffer(f, buffer, size, true);
 
 			lock_acquire(&filesys_lock);
 
@@ -320,6 +392,20 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			thread_current ()->exit_status = status;
 			thread_exit ();
 			NOT_REACHED ();
+		}
+
+		case SYS_SEEK: {
+			int fd = (int) f->R.rdi;
+			unsigned position = (unsigned) f->R.rsi;
+
+			lock_acquire (&filesys_lock);
+
+			if (fd >= 2 && fd < FD_MAX && thread_current ()->fd_table[fd] != NULL) {
+				file_seek (thread_current ()->fd_table[fd], position);
+			}
+
+			lock_release (&filesys_lock);
+			break;
 		}
 
 		default:

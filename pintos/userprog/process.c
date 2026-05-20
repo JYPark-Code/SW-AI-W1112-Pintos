@@ -29,6 +29,8 @@ static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
 
+extern struct lock filesys_lock;
+
 #define ARGV_MAX 64     /* 인자 개수 상한 (args-many 테스트 기준 22개로 충분) */
 
 /* __do_fork()에서는 parent 스레드도 필요하고 parent_if도 필요해서 구조체를 묶기 */
@@ -279,7 +281,11 @@ process_exec (void *f_name) {
 	bool success;
 
 	/* strtok_r 용 변수: file_name 페이지가 살아있는 동안 파싱 완료해야 한다. */
-	char *argv[ARGV_MAX];
+	char **argv = malloc (sizeof *argv * ARGV_MAX);
+	if (argv == NULL) {
+		palloc_free_page (file_name);
+		return -1;
+	}
 	int   argc = 0;
 	char *token, *save_ptr;
 
@@ -307,12 +313,18 @@ process_exec (void *f_name) {
 	strlcpy (thread_current ()->name, argv[0],
 	         sizeof thread_current ()->name);
 
+#ifdef VM
+	process_cleanup ();
+	supplemental_page_table_init (&thread_current ()->spt);
+#endif
+	
 	/* load()에는 프로그램 이름(argv[0])만 넘긴다.
 	 * 나머지 인자는 argument_stack()에서 유저 스택에 직접 쓴다. */
 	success = load (argv[0], &_if);
 
 
 	if (!success) {
+		free (argv);
 		palloc_free_page (file_name);
 		return -1;
 	}
@@ -320,6 +332,7 @@ process_exec (void *f_name) {
 	/* argument_stack()이 argv[i] 포인터(file_name 페이지 내부)를 읽으므로
 	 * 스택 세팅이 완전히 끝난 뒤에 해제한다. */
 	argument_stack (argv, argc, &_if);
+	free (argv);
 	palloc_free_page (file_name);
 
 	do_iret (&_if);
@@ -525,6 +538,8 @@ load (const char *file_name, struct intr_frame *if_) {
 	bool success = false;
 	int i;
 
+	bool fs_locked = false;
+
 	/* 기존 pml4 백업 */
 	uint64_t *old_pml4 = t->pml4;  
 
@@ -536,6 +551,9 @@ load (const char *file_name, struct intr_frame *if_) {
 	t->pml4 = new_pml4;  /* 임시로 교체 */
 	process_activate (thread_current ());
 
+	lock_acquire (&filesys_lock);
+	fs_locked = true;
+	
 	/* Open executable file. */
 	file = filesys_open (file_name);
 	if (file == NULL) {
@@ -622,14 +640,20 @@ load (const char *file_name, struct intr_frame *if_) {
 
 done:
 	/* We arrive here whether the load is successful or not. */
-	file_close(file);
-    if (!success) {
-        if (t->pml4 != old_pml4) {
-            pml4_destroy(t->pml4);
-        }
-        t->pml4 = old_pml4;       /* 원래 pml4로 복원 */
-        pml4_activate(old_pml4);  /* 원래 pml4 재활성화 */
-    }
+	if (file != NULL)
+		file_close (file);
+
+	if (fs_locked)
+		lock_release (&filesys_lock);
+
+	if (!success) {
+		if (t->pml4 != old_pml4)
+			pml4_destroy (t->pml4);
+
+		t->pml4 = old_pml4;
+		pml4_activate (old_pml4);
+	}
+
     return success;
 }
 
@@ -781,19 +805,6 @@ install_page (void *upage, void *kpage, bool writable) {
 /* From here, codes will be used after project 3.
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
-
-/* lazy_load_segment()가 나중에 파일을 읽을 때 필요한 정보를 담는 구조체 */
- struct lazy_load_arg
-{
-	/* 나중에 읽을 실행 파일 */
-	struct file *file;
-	/* 파일에서 읽기 시작할 위치 */
-	off_t ofs;
-	/* 파일에서 실제로 읽어야 하는 byte 수 */
-	size_t read_bytes;
-	/* 파일에서 읽은 뒤 0으로 채워야 하는 byte 수 */
-	size_t zero_bytes;
-};
 
 static bool
 lazy_load_segment (struct page *page, void *aux) {
