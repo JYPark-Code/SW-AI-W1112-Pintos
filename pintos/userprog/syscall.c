@@ -401,6 +401,33 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		NOT_REACHED();
 	}
 
+	case SYS_MMAP:
+	{
+		void *addr = (void *)f->R.rdi;
+		size_t length = f->R.rsi;
+		int writable = (int)f->R.rdx;
+		int fd = (int)f->R.rcx;
+		off_t offset = (off_t)f->R.r8;
+
+		// fd 검사
+		if (fd < 2 || fd >= 128)
+		{
+			f->R.rax = NULL;
+			break;
+		}
+
+		// 현재 스레드의 fd_table에서 fd가 가리키고 있는 file이 있는지 검사
+		struct file *file = thread_current()->fd_table[fd];
+		if (file == NULL)
+		{
+			f->R.rax = NULL;
+			break;
+		}
+
+		f->R.rax = (uint64_t)do_mmap(addr, length, writable, file, offset);
+		break;
+	}
+
 	default:
 		/* 아직 라우팅 안 된 시스템 콜.
 		 * 디버깅 가시성을 위해 한 줄 찍고 종료. */

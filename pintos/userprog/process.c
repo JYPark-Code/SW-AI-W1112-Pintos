@@ -807,8 +807,8 @@ install_page(void *upage, void *kpage, bool writable)
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
-static bool
-lazy_load_segment(struct page *page, void *aux)
+// anon 페이지 초기화에만 호출됨.
+bool lazy_load_segment(struct page *page, void *aux)
 {
 	struct lazy_load_info *info = (struct lazy_load_info *)aux;
 	void *kva = page->frame->kva;
@@ -827,6 +827,7 @@ lazy_load_segment(struct page *page, void *aux)
 	memset(kva + info->page_read_bytes, 0, info->page_zero_bytes);
 
 	// 4. lazy_load_into는 더 이상 필요하지 않으므로 free
+	file_close(info->file);
 	free(info);
 	return true;
 }
