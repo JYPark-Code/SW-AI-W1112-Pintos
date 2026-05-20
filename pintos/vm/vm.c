@@ -371,7 +371,6 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 				dst_aux->ofs = src_aux->ofs;
 				dst_aux->read_bytes = src_aux->read_bytes;
 				dst_aux->zero_bytes = src_aux->zero_bytes;
-				dst_aux->mmap_page_cnt = src_aux->mmap_page_cnt;
 				aux = dst_aux;
 			}
 

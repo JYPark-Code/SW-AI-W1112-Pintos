@@ -418,31 +418,6 @@ syscall_handler (struct intr_frame *f) {
 			break;
 		}
 
-#ifdef VM
-		case SYS_MMAP: {
-			void *addr = (void *) f->R.rdi;
-			size_t length = (size_t) f->R.rsi;
-			int writable = (int) f->R.rdx;
-			int fd = (int) f->R.r10;
-			off_t offset = (off_t) f->R.r8;
-
-			if (fd < 2 || fd >= FD_MAX || thread_current ()->fd_table[fd] == NULL) {
-				f->R.rax = 0;
-				break;
-			}
-
-			lock_acquire (&filesys_lock);
-			f->R.rax = (uint64_t) do_mmap (addr, length, writable,
-					thread_current ()->fd_table[fd], offset);
-			lock_release (&filesys_lock);
-			break;
-		}
-
-		case SYS_MUNMAP:
-			do_munmap ((void *) f->R.rdi);
-			break;
-#endif
-
 		default:
 			/* 아직 라우팅 안 된 시스템 콜.
 			 * 디버깅 가시성을 위해 한 줄 찍고 종료. */

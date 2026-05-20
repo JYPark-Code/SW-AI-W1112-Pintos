@@ -44,7 +44,6 @@ struct lazy_load_arg
 	off_t ofs;
 	size_t read_bytes;
 	size_t zero_bytes;
-	size_t mmap_page_cnt;
 };
 
 /* The representation of "page".
