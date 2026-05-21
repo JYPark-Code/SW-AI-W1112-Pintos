@@ -1,57 +1,73 @@
-# 2026-04-24 Meeting Contents
+# Pintos Project 3 — Virtual Memory
 
-## 주요 안건
+KAIST 64비트 Pintos 기반 VM 프로젝트 (11~13주차).
+Project 1 (Threads), Project 2 (User Programs) 를 거쳐 현재 Project 3 진행 중입니다.
 
-### 1. 스크럼 시간 (토, 월, 화, 수)
+---
 
-`매일 아침 10시 30분`  
-`하루 과제 볼륨 선정 - 매일 스프린트 범위 선정`
+## 코어타임
 
-- `깃 북 공부범위`
-- `테스트 범위`
+매일 밤 9시. 각자 개발한 것·학습한 것 중 이해가 안 되는 부분, 또는 이야기하고 싶은 것을 자유롭게 토론합니다.
 
-`매일 A, B, C, D 멤버 변경`
-
-### 2. 코어타임 시간
-
-`매일 밤 10시`  
-https://casys-kaist.github.io/pintos-kaist/project1/introduction.html
-
-1. `pintos-kaist docs [git book] - homework scope discussion`
-2. `개념 공부 1topic 1quiz - 인당 5 ~ 10분`
-3. `코드 리뷰`
-   - [A, B] 정해진 것 리뷰 [C, D] 정해진 것 리뷰
-     - `먼저 코어타임 전에 한 번 맞출것 정해두기 필수`
-     - `매일 A, B, C, D 멤버 변경`
-   - 전체적으로 A, B, C, D 코드 리뷰 후 머지
-
-### 3. 팀내 룰
+## 팀내 룰
 
 1. 공사구분 확실히 (상호 존대)
 2. 긴 대화는 슬랙으로 먼저 요청
 3. 공부하기로 한 약속한 범위는 반드시 해오기
 
-### 4. 깃 헙 브랜치 전략
-
-`매일 밤 Merge 후 A + B, C + D 브랜치는 Merge 후 Pull 받고 마무리(최신화 유지)`
-
-- Main
-  - dev
-    - A + B
-      - A
-      - B
-    - C + D
-      - C
-      - D
-
-### 4. 진행할 내용
+## 브랜치 전략
 
 ```
-테스트 내용은 여기서 선정
-Alarm Clock -> Priority Scheduling -> Priority Donation -> MLFQS
+main
+├── 팀원 A 브랜치
+├── 팀원 B 브랜치
+├── 팀원 C 브랜치
+└── 팀원 D 브랜치
 ```
 
-`토 + 월 + 화` 까지 마무리 하고 `수요일` 때 마지막 합병 후 발표 준비
+각자 개인 브랜치에서 작업 → dev 에 통합 → main 에 머지.
+
+---
+
+## 진행 현황 (Project 3 — Virtual Memory)
+
+| 항목 | 상태 |
+|------|------|
+| SPT (해시테이블, 페이지 삽입/탐색) | ✅ 완료 |
+| Lazy loading | ✅ 완료 |
+| Stack growth | ✅ 완료 |
+| Page fault 처리 및 syscall buffer 검증 | ✅ 완료 |
+| supplemental_page_table_copy (fork) | ✅ 완료 |
+| supplemental_page_table_kill (cleanup) | ✅ 완료 |
+| mmap / munmap | ✅ 완료 |
+| Swap in/out (clock algorithm) | 🔄 진행 중 |
+
+### 통과한 테스트 카테고리
+
+- **pt 테스트**: 전부 통과
+- **page 테스트**: 통과 (page-linear, page-shuffle, page-merge-seq 등)
+
+`pintos/tests/tests.pm` 의 `IGNORE_USER_FAULTS` 필터는 64bit 레지스터 패턴(`rip`, `rax`, `rbx`, …)으로 갱신되어 있습니다.
+
+---
+
+## 테스트 실행
+
+```bash
+cd pintos/vm
+make
+cd build
+pintos -- run <test-name>
+```
+
+---
+
+## 참고 자료
+
+- [KAIST Pintos Docs](https://casys-kaist.github.io/pintos-kaist/)
+- [Project 3 — Virtual Memory](https://casys-kaist.github.io/pintos-kaist/project3/introduction.html)
+
+---
 
 # 📘 Docker기반 Pintos 개발 환경 구축 가이드 
 
