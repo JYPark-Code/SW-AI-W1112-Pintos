@@ -22,11 +22,14 @@
 #ifdef VM
 #include "vm/vm.h"
 #endif
+#include "threads/malloc.h"
 
 static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
+
+extern struct lock filesys_lock;
 
 #define ARGV_MAX 64     /* 인자 개수 상한 (args-many 테스트 기준 22개로 충분) */
 
@@ -136,7 +139,7 @@ initd (void *f_name) {
 	process_init ();
 	thread_current()->parent = NULL;  /* initd는 부모가 없음 */
 	if (process_exec(f_name) < 0)
-    	PANIC("Fail to launch initd\n");
+		PANIC("Fail to launch initd\n");
 	NOT_REACHED ();
 }
 
@@ -168,7 +171,7 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 
 	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
 	if (is_kernel_vaddr(va))
-    	return true;
+		return true;
 
 	/* 2. Resolve VA from the parent's page map level 4. */
 	parent_page = pml4_get_page (parent->pml4, va);
@@ -251,14 +254,14 @@ __do_fork (void *aux) {
 	for (int i = 2; i < 128; i++) {
 		if (parent->fd_table[i] != NULL) {
 			current->fd_table[i] = file_duplicate(parent->fd_table[i]);
-			
+
 		}
 	}
 
 	current->fd_next = parent->fd_next;
 	sema_up(&parent->fork_sema);
 	if_.R.rax = 0;
-	
+
 	process_init ();
 
 	/* Finally, switch to the newly created process. */
@@ -278,7 +281,11 @@ process_exec (void *f_name) {
 	bool success;
 
 	/* strtok_r 용 변수: file_name 페이지가 살아있는 동안 파싱 완료해야 한다. */
-	char *argv[ARGV_MAX];
+	char **argv = malloc (sizeof *argv * ARGV_MAX);
+	if (argv == NULL) {
+		palloc_free_page (file_name);
+		return -1;
+	}
 	int   argc = 0;
 	char *token, *save_ptr;
 
@@ -306,12 +313,18 @@ process_exec (void *f_name) {
 	strlcpy (thread_current ()->name, argv[0],
 	         sizeof thread_current ()->name);
 
+#ifdef VM
+	process_cleanup ();
+	supplemental_page_table_init (&thread_current ()->spt);
+#endif
+
 	/* load()에는 프로그램 이름(argv[0])만 넘긴다.
 	 * 나머지 인자는 argument_stack()에서 유저 스택에 직접 쓴다. */
 	success = load (argv[0], &_if);
 
 
 	if (!success) {
+		free (argv);
 		palloc_free_page (file_name);
 		return -1;
 	}
@@ -319,6 +332,7 @@ process_exec (void *f_name) {
 	/* argument_stack()이 argv[i] 포인터(file_name 페이지 내부)를 읽으므로
 	 * 스택 세팅이 완전히 끝난 뒤에 해제한다. */
 	argument_stack (argv, argc, &_if);
+	free (argv);
 	palloc_free_page (file_name);
 
 	do_iret (&_if);
@@ -344,7 +358,7 @@ process_exec (void *f_name) {
  *      struct thread 본체와 t->exit_status가 아직 살아있다 → 안전하게 회수.
  *   4) list_remove로 좀비 엔트리 제거.
  *   5) sema_up(&t->exit_sema): 자식이 마지막 do_schedule(DYING)으로 진입.
- * 
+ *
  * 동일 child_tid에 대해 두 번째 호출되면 list_remove 이후 검색 실패 → -1.
  * 자식이 아닌 tid나 잘못된 tid도 검색 실패 → -1.
  */
@@ -524,8 +538,10 @@ load (const char *file_name, struct intr_frame *if_) {
 	bool success = false;
 	int i;
 
+	bool fs_locked = false;
+
 	/* 기존 pml4 백업 */
-	uint64_t *old_pml4 = t->pml4;  
+	uint64_t *old_pml4 = t->pml4;
 
 	/* Allocate and activate page directory. */
 	uint64_t *new_pml4 = pml4_create();
@@ -534,6 +550,9 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	t->pml4 = new_pml4;  /* 임시로 교체 */
 	process_activate (thread_current ());
+
+	lock_acquire (&filesys_lock);
+	fs_locked = true;
 
 	/* Open executable file. */
 	file = filesys_open (file_name);
@@ -606,13 +625,13 @@ load (const char *file_name, struct intr_frame *if_) {
 				break;
 		}
 	}
-	
+
 	/* Set up stack. */
 	if (!setup_stack (if_))
 		goto done;
 
 	/* Start address. */
-	if_->rip = ehdr.e_entry;   
+	if_->rip = ehdr.e_entry;
 
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
@@ -621,14 +640,20 @@ load (const char *file_name, struct intr_frame *if_) {
 
 done:
 	/* We arrive here whether the load is successful or not. */
-	file_close(file);
-    if (!success) {
-        if (t->pml4 != old_pml4) {
-            pml4_destroy(t->pml4);
-        }
-        t->pml4 = old_pml4;       /* 원래 pml4로 복원 */
-        pml4_activate(old_pml4);  /* 원래 pml4 재활성화 */
-    }
+	if (file != NULL)
+		file_close (file);
+
+	if (fs_locked)
+		lock_release (&filesys_lock);
+
+	if (!success) {
+		if (t->pml4 != old_pml4)
+			pml4_destroy (t->pml4);
+
+		t->pml4 = old_pml4;
+		pml4_activate (old_pml4);
+	}
+
     return success;
 }
 
@@ -786,6 +811,23 @@ lazy_load_segment (struct page *page, void *aux) {
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
+
+	struct lazy_load_arg *args = aux;
+
+	uint8_t *kva = page->frame->kva;
+
+	if (file_read_at (args->file, kva, args->read_bytes, args->ofs) != (int) args->read_bytes)
+	{
+		file_close (args->file);
+		free (args);
+
+		return false;
+	}
+	memset (kva + args->read_bytes, 0, args->zero_bytes);
+	file_close (args->file);
+	free (args);
+
+	return true;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -817,15 +859,36 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
-		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
-					writable, lazy_load_segment, aux))
+		struct lazy_load_arg *aux = malloc (sizeof *aux);
+
+		if (aux == NULL) {
 			return false;
+		}
+
+		aux->file = file_reopen (file);
+
+		if (aux->file == NULL)
+		{
+			free (aux);
+			return false;
+		}
+
+		aux->ofs = ofs;
+		aux->read_bytes = page_read_bytes;
+		aux->zero_bytes = page_zero_bytes;
+
+		if (!vm_alloc_page_with_initializer (VM_ANON, upage, writable, lazy_load_segment, aux))
+		{
+			file_close (aux->file);
+			free (aux);
+			return false;
+		}
 
 		/* Advance. */
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
+		ofs += page_read_bytes;
 	}
 	return true;
 }
@@ -841,6 +904,14 @@ setup_stack (struct intr_frame *if_) {
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
 
+	if (vm_alloc_page (VM_ANON | VM_MARKER_0, stack_bottom, true))
+	{
+		success = vm_claim_page (stack_bottom);
+
+		if (success) {
+			if_->rsp = USER_STACK;
+		}
+	}
 	return success;
 }
 #endif /* VM */

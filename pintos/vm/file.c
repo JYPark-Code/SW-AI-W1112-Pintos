@@ -21,38 +21,39 @@ vm_file_init (void) {
 
 /* Initialize the file backed page */
 bool
-file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
+file_backed_initializer (struct page *page, enum vm_type type UNUSED, void *kva UNUSED) {
 	/* Set up the handler */
 	page->operations = &file_ops;
 
-	struct file_page *file_page = &page->file;
+	struct file_page *file_page UNUSED = &page->file;
+	return true;
 }
 
 /* Swap in the page by read contents from the file. */
 static bool
-file_backed_swap_in (struct page *page, void *kva) {
-	struct file_page *file_page UNUSED = &page->file;
+file_backed_swap_in (struct page *page UNUSED, void *kva UNUSED) {
+	return false;
 }
 
 /* Swap out the page by writeback contents to the file. */
 static bool
-file_backed_swap_out (struct page *page) {
-	struct file_page *file_page UNUSED = &page->file;
+file_backed_swap_out (struct page *page UNUSED) {
+	return false;
 }
 
 /* Destory the file backed page. PAGE will be freed by the caller. */
 static void
-file_backed_destroy (struct page *page) {
-	struct file_page *file_page UNUSED = &page->file;
+file_backed_destroy (struct page *page UNUSED) {
 }
 
 /* Do the mmap */
 void *
-do_mmap (void *addr, size_t length, int writable,
-		struct file *file, off_t offset) {
+do_mmap (void *addr UNUSED, size_t length UNUSED, int writable UNUSED,
+		struct file *file UNUSED, off_t offset UNUSED) {
+	return NULL;
 }
 
 /* Do the munmap */
 void
-do_munmap (void *addr) {
+do_munmap (void *addr UNUSED) {
 }
